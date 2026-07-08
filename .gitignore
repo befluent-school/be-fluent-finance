@@ -1,0 +1,15 @@
+# env files — nunca commitar segredos
+.env
+.env.local
+.env.*.local
+
+# dependencies
+node_modules/
+
+# supabase local
+supabase/.branches
+supabase/.temp
+
+# misc
+.DS_Store
+*.pem

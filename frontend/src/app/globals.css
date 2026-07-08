@@ -1,0 +1,229 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+
+  /* Grafite — base do tema escuro premium. Preto quente, nunca neutro frio. */
+  --ink-950: #0f0e0d;   /* fundo de página */
+  --ink-900: #171513;   /* superfície base (cards) */
+  --ink-800: #201d1a;   /* superfície elevada (cards em destaque, header) */
+  --ink-700: #2b2723;   /* bordas, divisores */
+  --ink-600: #3a352f;   /* bordas em hover, elementos ativos */
+  --ink-500: #5c554c;   /* texto terciário / placeholder */
+  --ink-300: #8a8175;   /* texto secundário */
+  --ink-100: #d8d2c6;   /* texto primário sobre fundo escuro */
+  --ink-50: #f3f0e9;    /* texto de maior ênfase, quase branco quente */
+
+  /* Âmbar — joia rara, nunca área grande. Mais saturado no dark para "brilhar". */
+  --amber-900: #6b430c;
+  --amber-700: #b06f0f;
+  --amber-600: #d68a12;
+  --amber-500: #f0a520;   /* acento principal — um tom mais vivo que o hex de marca no claro */
+  --amber-400: #f6bc4d;
+  --amber-300: #f9cd74;
+  --amber-200: #fbdca0;
+  --amber-glow: rgba(240, 165, 32, 0.35);
+
+  /* Semânticos financeiros — legíveis em fundo escuro, ainda dessaturados */
+  --status-paid: #6fbf94;
+  --status-paid-bg: rgba(111, 191, 148, 0.12);
+  --status-overdue: #e08877;
+  --status-overdue-bg: rgba(224, 136, 119, 0.14);
+  --status-pending: var(--amber-400);
+  --status-pending-bg: rgba(240, 165, 32, 0.14);
+
+  --focus-ring: var(--amber-500);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --shadow-card: 0 1px 0 0 color-mix(in srgb, #ffffff 5%, transparent) inset,
+    0 18px 40px -24px rgba(0, 0, 0, 0.8);
+  --shadow-elevated: 0 24px 48px -16px rgba(0, 0, 0, 0.7);
+  --border-glow: 0 0 0 1px rgba(240, 165, 32, 0.25), 0 0 24px -4px var(--amber-glow);
+  --glow-amber: 0 8px 30px -8px color-mix(in srgb, var(--amber-500) 55%, transparent);
+
+  --background: var(--ink-950);
+  --foreground: var(--ink-100);
+}
+
+@theme inline {
+  --color-ink-950: var(--ink-950);
+  --color-ink-900: var(--ink-900);
+  --color-ink-800: var(--ink-800);
+  --color-ink-700: var(--ink-700);
+  --color-ink-600: var(--ink-600);
+  --color-ink-500: var(--ink-500);
+  --color-ink-300: var(--ink-300);
+  --color-ink-100: var(--ink-100);
+  --color-ink-50: var(--ink-50);
+
+  --color-amber-900: var(--amber-900);
+  --color-amber-700: var(--amber-700);
+  --color-amber-600: var(--amber-600);
+  --color-amber-500: var(--amber-500);
+  --color-amber-400: var(--amber-400);
+  --color-amber-300: var(--amber-300);
+  --color-amber-200: var(--amber-200);
+
+  /* graphite-* preservado apenas como alias direto ink-* (mesma escala,
+     mesmo sentido: 950=mais escuro, 50=mais claro) — nenhuma inversão. */
+  --color-graphite-950: var(--ink-950);
+  --color-graphite-900: var(--ink-900);
+  --color-graphite-800: var(--ink-800);
+  --color-graphite-700: var(--ink-700);
+  --color-graphite-600: var(--ink-600);
+  --color-graphite-500: var(--ink-500);
+  --color-graphite-300: var(--ink-300);
+  --color-graphite-200: var(--ink-700);
+  --color-graphite-100: var(--ink-800);
+  --color-graphite-50: var(--ink-900);
+  --color-graphite: var(--ink-900);
+  --color-amber: var(--amber-500);
+  --color-white: var(--ink-50);
+  --color-surface: var(--ink-900);
+
+  --color-status-paid: var(--status-paid);
+  --color-status-paid-bg: var(--status-paid-bg);
+  --color-status-overdue: var(--status-overdue);
+  --color-status-overdue-bg: var(--status-overdue-bg);
+  --color-status-pending: var(--status-pending);
+  --color-status-pending-bg: var(--status-pending-bg);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --font-display: var(--font-jakarta);
+  --font-sans: var(--font-manrope);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+}
+
+* {
+  border-color: var(--ink-700);
+}
+
+body {
+  background-color: var(--background);
+  /* Camadas de glow radial estáticas — sem JS, sem repaint */
+  background-image:
+    radial-gradient(ellipse 100% 55% at 50% -5%, var(--ink-800) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 40% at 80% 100%, color-mix(in srgb, var(--amber-500) 8%, transparent) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 35% at 10% 60%, color-mix(in srgb, var(--amber-500) 6%, transparent) 0%, transparent 70%);
+  background-attachment: fixed;
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+}
+
+/* Grão sutil para dar textura ao fundo escuro em vez de chapado */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+h1, h2, h3, h4, h5, .font-display {
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+.font-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Card com borda hairline em gradiente + elevação em camadas — a base
+   visual de todo card premium do produto (substitui card-surface). */
+.card-premium {
+  position: relative;
+  background-color: var(--ink-900);
+  background-image: linear-gradient(180deg, color-mix(in srgb, #ffffff 4%, transparent), transparent 60%);
+  border: 1px solid color-mix(in srgb, #ffffff 6%, transparent);
+  box-shadow: var(--shadow-card);
+  transition: border-color 0.2s ease;
+}
+.card-premium:hover {
+  border-color: color-mix(in srgb, var(--amber-500) 35%, transparent);
+}
+
+/* Retrocompatível — mesmo visual do card-premium */
+.card-surface {
+  background-color: var(--ink-900);
+  background-image: linear-gradient(180deg, color-mix(in srgb, #ffffff 4%, transparent), transparent 60%);
+  border: 1px solid color-mix(in srgb, #ffffff 6%, transparent);
+  box-shadow: var(--shadow-card);
+}
+
+.card-glow {
+  border: 1px solid rgba(240, 165, 32, 0.3);
+  box-shadow: var(--border-glow);
+}
+
+.glow-amber {
+  box-shadow: var(--glow-amber);
+}
+
+.text-glow {
+  text-shadow: 0 0 28px color-mix(in srgb, var(--amber-500) 45%, transparent);
+}
+
+.gradient-text {
+  background-image: linear-gradient(120deg, var(--amber-300), var(--amber-500) 60%, var(--amber-700));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Grade sutil com máscara radial — usar em heros/seções vazias */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, #ffffff 4%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, #ffffff 4%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 75%);
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 75%);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--amber-500) 35%, transparent);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Scrollbar fina premium */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-600) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ink-600);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-500);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-rise {
+  animation: rise 0.5s ease-out forwards;
+}
