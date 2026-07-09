@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatCurrencyBRL } from "@shared/finance";
 import { ConnectBankButton } from "./connect-bank-button";
@@ -17,11 +18,19 @@ type StagingRow = {
 export default async function ConciliacaoPage() {
   const supabase = await createClient();
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
   const { data: profile } = await supabase
     .from("profiles")
     .select("role")
-    .eq("id", (await supabase.auth.getUser()).data.user!.id)
-    .single();
+    .eq("id", user.id)
+    .maybeSingle();
 
   if (profile?.role === "funcionario") {
     redirect("/dashboard");
@@ -47,6 +56,18 @@ export default async function ConciliacaoPage() {
           antes de virarem lançamentos reais no fluxo de caixa.
         </p>
         <ConnectBankButton />
+      </div>
+
+      <div className="mt-4 flex gap-4 border-b border-ink-700 text-sm">
+        <span className="border-b-2 border-amber-500 px-1 pb-2 font-semibold text-ink-50">
+          Pendentes
+        </span>
+        <Link
+          href="/banco/extrato"
+          className="border-b-2 border-transparent px-1 pb-2 text-ink-300 hover:text-ink-50"
+        >
+          Extrato completo
+        </Link>
       </div>
 
       <h2 className="mt-8 text-lg font-semibold text-ink-50">Contas conectadas</h2>

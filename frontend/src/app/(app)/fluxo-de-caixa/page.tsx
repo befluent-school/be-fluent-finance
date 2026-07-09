@@ -39,10 +39,13 @@ export default async function FluxoDeCaixaPage({
     await Promise.all([
       supabase
         .from("cash_transactions_with_balance")
-        .select("id, date, description, amount, type, payment_method, running_balance, cost_categories(name)")
+        .select(
+          "id, date, created_at, description, amount, type, payment_method, running_balance, cost_categories(name)"
+        )
         .gte("date", `${referenceMonth}-01`)
         .lt("date", `${nextMonth}-01`)
         .order("date", { ascending: false })
+        .order("created_at", { ascending: false })
         .returns<TransactionRow[]>(),
       supabase.from("cost_categories").select("id, name, type").eq("active", true),
       supabase

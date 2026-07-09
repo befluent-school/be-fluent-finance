@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { createTask, updateTask, type TaskState } from "@/app/actions/tasks";
 
 type TaskRow = {
@@ -36,6 +36,7 @@ export function TaskForm({
     isEdit ? updateTask : createTask,
     undefined
   );
+  const [isFixed, setIsFixed] = useState((task?.recurrence ?? "none") !== "none");
 
   useEffect(() => {
     if (state?.success) {
@@ -125,19 +126,49 @@ export function TaskForm({
               </select>
             </div>
 
-            <div>
-              <label className={labelClass}>Recorrência</label>
-              <select
-                name="recurrence"
-                defaultValue={task?.recurrence ?? "none"}
-                className={inputClass}
-              >
-                <option value="none">Não repete</option>
-                <option value="daily">Diária</option>
-                <option value="weekly">Semanal</option>
-                <option value="monthly">Mensal</option>
-              </select>
+            <div className="col-span-2">
+              <label className={labelClass}>Essa atividade é fixa ou variável?</label>
+              <div className="mt-1 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsFixed(false)}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition ${
+                    !isFixed
+                      ? "border-amber-500 bg-amber-500/15 text-amber-300"
+                      : "border-ink-700 text-ink-300 hover:text-ink-50"
+                  }`}
+                >
+                  Variável (uma vez)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsFixed(true)}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition ${
+                    isFixed
+                      ? "border-amber-500 bg-amber-500/15 text-amber-300"
+                      : "border-ink-700 text-ink-300 hover:text-ink-50"
+                  }`}
+                >
+                  Fixa (repete)
+                </button>
+              </div>
             </div>
+
+            {isFixed && (
+              <div className="col-span-2">
+                <label className={labelClass}>Repete a cada</label>
+                <select
+                  name="recurrence"
+                  defaultValue={task?.recurrence !== "none" ? task?.recurrence : "daily"}
+                  className={inputClass}
+                >
+                  <option value="daily">Dia</option>
+                  <option value="weekly">Semana</option>
+                  <option value="monthly">Mês</option>
+                </select>
+              </div>
+            )}
+            {!isFixed && <input type="hidden" name="recurrence" value="none" />}
           </div>
 
           {state?.message && <p className="text-sm text-status-overdue">{state.message}</p>}
