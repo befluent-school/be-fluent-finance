@@ -17,9 +17,11 @@ export async function getPluggyConnectToken(): Promise<string> {
   try {
     return await createConnectToken(webhookUrl);
   } catch (err) {
-    // Server Actions ofuscam mensagens de erro não controladas em produção
-    // ("An error occurred") — relançamos com uma mensagem explícita para
-    // que o usuário saiba que é configuração da Pluggy, não um bug aleatório.
+    // Next.js ofusca qualquer mensagem de exceção não tratada em Server
+    // Actions em produção ("An error occurred..."), mesmo com throw
+    // explícito — por isso logamos aqui para aparecer nos logs do servidor
+    // (Render), já que o cliente nunca verá o texto completo em produção.
+    console.error("[getPluggyConnectToken] Falha ao criar connect token:", err);
     throw new Error(
       `Não foi possível conectar à Pluggy: ${err instanceof Error ? err.message : String(err)}`
     );
