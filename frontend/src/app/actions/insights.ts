@@ -1,14 +1,14 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createOpenAiClient, isOpenAiConfigured } from "@/lib/openai";
+import { createAnthropicClient, isAnthropicConfigured } from "@/lib/anthropic";
 
 export type InsightsResult = { insights: string[] } | { error: string };
 
 const SYSTEM_PROMPT = `Você é um analista financeiro sênior avaliando a saúde financeira de uma escola de mentoria individualizada de inglês para executivos. Seja crítico, direto e específico — nunca genérico, nunca vendedor, nunca use frases de efeito. Aponte com números exatos o que está bom, o que está ruim e qual é o risco mais urgente agora. Se os dados forem insuficientes para uma conclusão, diga isso explicitamente em vez de inventar. Responda em português, em 3 a 5 bullets curtos e objetivos, sem introdução nem conclusão — apenas os bullets.`;
 
 export async function getFinancialInsights(): Promise<InsightsResult> {
-  if (!isOpenAiConfigured()) {
+  if (!isAnthropicConfigured()) {
     return { error: "not_configured" };
   }
 
@@ -73,17 +73,18 @@ Dados reais do mês corrente (${referenceMonth.slice(0, 7)}):
 `.trim();
 
   try {
-    const client = createOpenAiClient();
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: summary },
-      ],
-      temperature: 0.3,
+    const client = createAnthropicClient();
+    const response = await client.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 1024,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: summary }],
     });
 
-    const text = response.choices[0]?.message?.content ?? "";
+    const text = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
     const insights = text
       .split("\n")
       .map((line) => line.replace(/^[-•*]\s*/, "").trim())
