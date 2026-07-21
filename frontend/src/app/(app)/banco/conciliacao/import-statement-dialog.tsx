@@ -3,19 +3,28 @@
 import { useRef, useState, useTransition } from "react";
 import {
   readSheetAsRows,
+  detectColumns,
   parseCsvStatement,
   parseOfxStatement,
   type ParsedStatementRow,
 } from "@/lib/bank-statement-parser";
 import { importBankStatement, suggestCategoriesForImport } from "@/app/actions/bank-import";
 
+const inputClass =
+  "mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500";
+
 export function ImportStatementDialog({ categoryNames }: { categoryNames: string[] }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState<"select" | "preview" | "done">("select");
+  const [step, setStep] = useState<"select" | "mapping" | "preview" | "done">("select");
   const [accountLabel, setAccountLabel] = useState("");
   const [fileName, setFileName] = useState("");
   const [format, setFormat] = useState<"csv" | "ofx">("csv");
+  const [sheetRows, setSheetRows] = useState<Record<string, unknown>[]>([]);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [dateCol, setDateCol] = useState("");
+  const [descCol, setDescCol] = useState("");
+  const [amountCol, setAmountCol] = useState("");
   const [rows, setRows] = useState<ParsedStatementRow[]>([]);
   const [suggestions, setSuggestions] = useState<Map<string, string | null>>(new Map());
   const [isPending, startTransition] = useTransition();
@@ -27,6 +36,11 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
     setStep("select");
     setAccountLabel("");
     setFileName("");
+    setSheetRows([]);
+    setHeaders([]);
+    setDateCol("");
+    setDescCol("");
+    setAmountCol("");
     setRows([]);
     setSuggestions(new Map());
     setParseError(null);
@@ -39,55 +53,102 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
     dialogRef.current?.showModal();
   }
 
+  function runSuggestions(parsedRows: ParsedStatementRow[]) {
+    if (categoryNames.length === 0) return;
+    setIsSuggesting(true);
+    suggestCategoriesForImport(parsedRows.map((r) => r.description), categoryNames)
+      .then((results) => {
+        const map = new Map<string, string | null>();
+        for (const r of results) map.set(r.description, r.suggestedCategory);
+        setSuggestions(map);
+      })
+      .finally(() => setIsSuggesting(false));
+  }
+
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
     setParseError(null);
 
-    const isOfx = file.name.toLowerCase().endsWith(".ofx");
+    const lower = file.name.toLowerCase();
+    const isOfx = lower.endsWith(".ofx");
     setFormat(isOfx ? "ofx" : "csv");
 
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
-        let parsed: ParsedStatementRow[] | null;
 
         if (isOfx) {
-          parsed = parseOfxStatement(String(data));
-        } else {
-          const sheetRows = readSheetAsRows(data as string);
-          parsed = parseCsvStatement(sheetRows);
-        }
-
-        if (!parsed || parsed.length === 0) {
-          setParseError(
-            "Não foi possível identificar as colunas de data/descrição/valor no arquivo."
-          );
+          const parsed = parseOfxStatement(String(data));
+          if (parsed.length === 0) {
+            setParseError("Não foi possível encontrar transações no arquivo OFX.");
+            return;
+          }
+          setRows(parsed);
+          setStep("preview");
+          runSuggestions(parsed);
           return;
         }
 
-        setRows(parsed);
-        setStep("preview");
+        const parsedRows = readSheetAsRows(data as string);
+        if (parsedRows.length === 0) {
+          setParseError("A planilha está vazia.");
+          return;
+        }
 
-        if (categoryNames.length > 0) {
-          setIsSuggesting(true);
-          suggestCategoriesForImport(parsed.map((r) => r.description), categoryNames)
-            .then((results) => {
-              const map = new Map<string, string | null>();
-              for (const r of results) map.set(r.description, r.suggestedCategory);
-              setSuggestions(map);
-            })
-            .finally(() => setIsSuggesting(false));
+        const fileHeaders = Object.keys(parsedRows[0]);
+        const detected = detectColumns(fileHeaders);
+        setSheetRows(parsedRows);
+        setHeaders(fileHeaders);
+        setDateCol(detected.dateCol ?? "");
+        setDescCol(detected.descCol ?? "");
+        setAmountCol(detected.amountCol ?? "");
+
+        if (detected.dateCol && detected.descCol && detected.amountCol) {
+          const parsed = parseCsvStatement(parsedRows, {
+            dateCol: detected.dateCol,
+            descCol: detected.descCol,
+            amountCol: detected.amountCol,
+          });
+          if (parsed.length === 0) {
+            setStep("mapping");
+            return;
+          }
+          setRows(parsed);
+          setStep("preview");
+          runSuggestions(parsed);
+        } else {
+          setStep("mapping");
         }
       } catch {
-        setParseError("Não foi possível ler o arquivo. Verifique se é um .csv ou .ofx válido.");
+        setParseError(
+          "Não foi possível ler o arquivo. Verifique se é um .csv, .xlsx ou .ofx válido."
+        );
       }
     };
 
     if (isOfx) reader.readAsText(file);
     else reader.readAsBinaryString(file);
+  }
+
+  function handleConfirmMapping() {
+    if (!dateCol || !descCol || !amountCol) {
+      setParseError("Selecione as três colunas para continuar.");
+      return;
+    }
+    const parsed = parseCsvStatement(sheetRows, { dateCol, descCol, amountCol });
+    if (parsed.length === 0) {
+      setParseError(
+        "Nenhuma transação válida encontrada com essas colunas. Verifique o mapeamento."
+      );
+      return;
+    }
+    setParseError(null);
+    setRows(parsed);
+    setStep("preview");
+    runSuggestions(parsed);
   }
 
   function handleConfirmImport() {
@@ -130,7 +191,7 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
           {step === "select" && (
             <div className="space-y-4">
               <p className="text-sm text-ink-300">
-                Exporte o extrato do seu banco (CSV ou OFX) e envie aqui. As transações
+                Exporte o extrato do seu banco (CSV, Excel ou OFX) e envie aqui. As transações
                 aparecerão em &quot;Pendentes&quot; para você confirmar antes de virarem
                 lançamentos reais.
               </p>
@@ -142,16 +203,18 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
                 <input
                   value={accountLabel}
                   onChange={(e) => setAccountLabel(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  className={inputClass}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-ink-100">Arquivo (.csv ou .ofx)</label>
+                <label className="block text-sm font-medium text-ink-100">
+                  Arquivo (.csv, .xlsx, .xls ou .ofx)
+                </label>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".csv,.ofx"
+                  accept=".csv,.xlsx,.xls,.ofx"
                   disabled={!accountLabel}
                   onChange={handleFileChange}
                   className="mt-1 block w-full text-sm text-ink-300 file:mr-3 file:rounded-md file:border-0 file:bg-amber-500/15 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-amber-300 hover:file:bg-amber-500/25 disabled:opacity-50"
@@ -162,6 +225,97 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
               </div>
 
               {parseError && <p className="text-sm text-status-overdue">{parseError}</p>}
+            </div>
+          )}
+
+          {step === "mapping" && (
+            <div className="space-y-4">
+              <p className="text-sm text-ink-300">
+                Não conseguimos identificar as colunas automaticamente. Selecione qual coluna do
+                arquivo corresponde a cada campo:
+              </p>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                  <label className="block text-sm font-medium text-ink-100">Data</label>
+                  <select value={dateCol} onChange={(e) => setDateCol(e.target.value)} className={inputClass}>
+                    <option value="">Selecione</option>
+                    {headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-ink-100">Descrição</label>
+                  <select value={descCol} onChange={(e) => setDescCol(e.target.value)} className={inputClass}>
+                    <option value="">Selecione</option>
+                    {headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-ink-100">Valor</label>
+                  <select value={amountCol} onChange={(e) => setAmountCol(e.target.value)} className={inputClass}>
+                    <option value="">Selecione</option>
+                    {headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {sheetRows.length > 0 && (
+                <div className="max-h-48 overflow-y-auto card-premium rounded-md">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-ink-700 bg-white/[0.03] text-ink-300">
+                        {headers.map((h) => (
+                          <th key={h} className="px-3 py-2 font-medium">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sheetRows.slice(0, 3).map((row, i) => (
+                        <tr key={i} className="border-b border-ink-700/70 last:border-0">
+                          {headers.map((h) => (
+                            <td key={h} className="px-3 py-2 text-ink-300">
+                              {String(row[h] ?? "")}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {parseError && <p className="text-sm text-status-overdue">{parseError}</p>}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={reset}
+                  className="rounded-md px-4 py-2 text-sm font-medium text-ink-300 hover:text-ink-50"
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmMapping}
+                  className="rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 glow-amber transition hover:brightness-105"
+                >
+                  Continuar
+                </button>
+              </div>
             </div>
           )}
 

@@ -40,24 +40,30 @@ function parseAmount(raw: string): number {
   return parseFloat(cleaned);
 }
 
+/** Tenta detectar automaticamente as colunas de data/descrição/valor por nome comum (PT/EN). */
+export function detectColumns(
+  headers: string[]
+): { dateCol?: string; descCol?: string; amountCol?: string } {
+  return {
+    dateCol: findColumn(headers, DATE_COLUMN_NAMES),
+    descCol: findColumn(headers, DESCRIPTION_COLUMN_NAMES),
+    amountCol: findColumn(headers, AMOUNT_COLUMN_NAMES),
+  };
+}
+
 /**
- * Detecta colunas de data/descrição/valor por nome comum (PT/EN) — funciona
- * para extratos do Asaas, Inter e a maioria dos bancos. Se não detectar com
- * confiança, retorna null para o chamador pedir mapeamento manual.
+ * Converte linhas de uma planilha (CSV/Excel) em transações, usando as
+ * colunas informadas (detectadas automaticamente ou escolhidas manualmente
+ * pelo usuário quando a detecção falha) — funciona para extratos do Asaas,
+ * Inter e a maioria dos bancos/gateways que exportam CSV ou Excel.
  */
 export function parseCsvStatement(
-  rows: Record<string, unknown>[]
-): ParsedStatementRow[] | null {
-  if (rows.length === 0) return null;
-
-  const headers = Object.keys(rows[0]);
-  const dateCol = findColumn(headers, DATE_COLUMN_NAMES);
-  const descCol = findColumn(headers, DESCRIPTION_COLUMN_NAMES);
-  const amountCol = findColumn(headers, AMOUNT_COLUMN_NAMES);
-
-  if (!dateCol || !descCol || !amountCol) return null;
-
+  rows: Record<string, unknown>[],
+  columns: { dateCol: string; descCol: string; amountCol: string }
+): ParsedStatementRow[] {
+  const { dateCol, descCol, amountCol } = columns;
   const parsed: ParsedStatementRow[] = [];
+
   for (const row of rows) {
     const dateRaw = String(row[dateCol] ?? "");
     const date = parseBRDate(dateRaw);
