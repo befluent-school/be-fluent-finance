@@ -23,3 +23,26 @@ export function estimateMonthlyTeacherCost(
 export function formatCurrencyBRL(value: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
+
+/**
+ * Multa fixa de 10% + juros de 1% ao mês (pro-rata pelos dias de atraso)
+ * sobre mensalidades pagas após o vencimento — regra padrão da Be Fluent.
+ * Sem atraso (paidDate <= dueDate), retorna tudo zerado.
+ */
+export function calculateLateFee(amount: number, dueDate: string, paidDate: string) {
+  const due = new Date(dueDate + "T00:00:00");
+  const paid = new Date(paidDate + "T00:00:00");
+  const daysLate = Math.floor((paid.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (daysLate <= 0) {
+    return { lateFee: 0, interest: 0, total: amount };
+  }
+
+  const lateFee = amount * 0.1;
+  const interest = amount * 0.01 * (daysLate / 30);
+  return {
+    lateFee: Math.round(lateFee * 100) / 100,
+    interest: Math.round(interest * 100) / 100,
+    total: Math.round((amount + lateFee + interest) * 100) / 100,
+  };
+}

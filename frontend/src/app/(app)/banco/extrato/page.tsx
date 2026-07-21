@@ -11,7 +11,7 @@ type ExtratoRow = {
   pluggy_type: "DEBIT" | "CREDIT";
   ignored: boolean;
   reconciled_cash_transaction_id: string | null;
-  bank_connections: { institution_name: string } | null;
+  bank_statement_imports: { account_label: string } | null;
 };
 
 const PAGE_SIZE = 50;
@@ -51,20 +51,20 @@ export default async function ExtratoPage({
     redirect("/dashboard");
   }
 
-  const { data: connections } = await supabase
-    .from("bank_connections")
-    .select("id, institution_name")
-    .order("institution_name");
+  const { data: imports } = await supabase
+    .from("bank_statement_imports")
+    .select("id, account_label")
+    .order("account_label");
 
   let query = supabase
     .from("bank_transactions_staging")
     .select(
-      "id, date, description, amount, pluggy_type, ignored, reconciled_cash_transaction_id, bank_connections(institution_name)",
+      "id, date, description, amount, pluggy_type, ignored, reconciled_cash_transaction_id, bank_statement_imports(account_label)",
       { count: "exact" }
     )
     .order("date", { ascending: false });
 
-  if (banco) query = query.eq("bank_connection_id", banco);
+  if (banco) query = query.eq("import_id", banco);
   if (de) query = query.gte("date", de);
   if (ate) query = query.lte("date", ate);
   if (tipo === "credito") query = query.eq("pluggy_type", "CREDIT");
@@ -94,7 +94,7 @@ export default async function ExtratoPage({
   return (
     <div>
       <p className="text-sm text-ink-300">
-        Extrato completo das transações importadas via Open Finance, por banco e período.
+        Extrato completo das transações importadas, por conta e período.
       </p>
 
       <div className="mt-4 flex gap-4 border-b border-ink-700 text-sm">
@@ -115,10 +115,10 @@ export default async function ExtratoPage({
           defaultValue={banco ?? ""}
           className="rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-50"
         >
-          <option value="">Todos os bancos</option>
-          {(connections ?? []).map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.institution_name}
+          <option value="">Todas as contas</option>
+          {(imports ?? []).map((imp) => (
+            <option key={imp.id} value={imp.id}>
+              {imp.account_label}
             </option>
           ))}
         </select>
@@ -166,7 +166,7 @@ export default async function ExtratoPage({
           <thead>
             <tr className="border-b border-ink-700 bg-white/[0.03] text-left text-xs text-ink-300">
               <th className="px-4 py-3 font-medium">Data</th>
-              <th className="px-4 py-3 font-medium">Banco</th>
+              <th className="px-4 py-3 font-medium">Conta</th>
               <th className="px-4 py-3 font-medium">Descrição</th>
               <th className="px-4 py-3 font-medium">Valor</th>
               <th className="px-4 py-3 font-medium">Status</th>
@@ -185,7 +185,7 @@ export default async function ExtratoPage({
                     {new Date(t.date).toLocaleDateString("pt-BR")}
                   </td>
                   <td className="px-4 py-3 text-ink-300">
-                    {t.bank_connections?.institution_name ?? "—"}
+                    {t.bank_statement_imports?.account_label ?? "—"}
                   </td>
                   <td className="px-4 py-3">{t.description}</td>
                   <td

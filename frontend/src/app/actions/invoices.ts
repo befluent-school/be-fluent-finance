@@ -51,6 +51,8 @@ const MarkPaidSchema = z.object({
   invoiceId: z.uuid(),
   paidDate: z.string().min(1),
   paymentMethod: z.enum(["pix", "cartao", "boleto", "transferencia"]),
+  lateFeeAmount: z.coerce.number().min(0).default(0),
+  interestAmount: z.coerce.number().min(0).default(0),
 });
 
 export type MarkPaidState = { error?: string } | undefined;
@@ -63,11 +65,15 @@ export async function markInvoicePaid(
     invoiceId: formData.get("invoiceId"),
     paidDate: formData.get("paidDate"),
     paymentMethod: formData.get("paymentMethod"),
+    lateFeeAmount: formData.get("lateFeeAmount"),
+    interestAmount: formData.get("interestAmount"),
   });
 
   if (!validated.success) {
     return { error: "Dados inválidos." };
   }
+
+  const { lateFeeAmount, interestAmount } = validated.data;
 
   const supabase = await createClient();
   const { data: invoice, error } = await supabase
@@ -75,6 +81,8 @@ export async function markInvoicePaid(
     .update({
       paid_date: validated.data.paidDate,
       payment_method: validated.data.paymentMethod,
+      late_fee_amount: lateFeeAmount,
+      interest_amount: interestAmount,
     })
     .eq("id", validated.data.invoiceId)
     .select("id, amount, enrollment_id, enrollments(students(full_name))")
@@ -84,6 +92,10 @@ export async function markInvoicePaid(
     return { error: "Erro ao registrar pagamento." };
   }
 
+  const total = invoice.amount + lateFeeAmount + interestAmount;
+
+  await supabase.from("invoices").update({ total_paid: total }).eq("id", invoice.id);
+
   // Toda mensalidade paga vira automaticamente uma entrada no fluxo de
   // caixa — elimina a duplicação/dessincronia que a planilha tinha entre
   // "CONTROLE DE MENSALIDADES" e "FLUXO DE CAIXA".
@@ -91,10 +103,15 @@ export async function markInvoicePaid(
     (invoice.enrollments as unknown as { students: { full_name: string } | null })?.students
       ?.full_name ?? "aluno";
 
+  const description =
+    lateFeeAmount > 0 || interestAmount > 0
+      ? `Mensalidade - ${studentName} (+ multa/juros)`
+      : `Mensalidade - ${studentName}`;
+
   await supabase.from("cash_transactions").insert({
     date: validated.data.paidDate,
-    description: `Mensalidade - ${studentName}`,
-    amount: invoice.amount,
+    description,
+    amount: total,
     type: "entrada",
     payment_method: validated.data.paymentMethod,
     invoice_id: invoice.id,

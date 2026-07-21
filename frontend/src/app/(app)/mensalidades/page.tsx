@@ -116,7 +116,13 @@ export default async function MensalidadesPage({
                   <StatusBadge status={invoice.effective_status} />
                 </td>
                 <td className="px-4 py-3">
-                  {invoice.effective_status !== "pago" && <MarkPaidForm invoiceId={invoice.id} />}
+                  {invoice.effective_status !== "pago" && (
+                    <MarkPaidForm
+                      invoiceId={invoice.id}
+                      amount={invoice.amount}
+                      dueDate={invoice.due_date}
+                    />
+                  )}
                 </td>
               </tr>
             ))}

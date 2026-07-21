@@ -60,3 +60,37 @@ export async function createCashTransaction(
   revalidatePath("/fluxo-de-caixa");
   return { success: true };
 }
+
+const CostCategorySchema = z.object({
+  name: z.string().min(2, { error: "Informe o nome da categoria." }),
+  type: z.enum(["fixed", "variable"]),
+});
+
+export type CreateCostCategoryResult =
+  | { success: true; category: { id: string; name: string; type: string } }
+  | { success: false; error: string };
+
+export async function createCostCategory(formData: FormData): Promise<CreateCostCategoryResult> {
+  const validated = CostCategorySchema.safeParse({
+    name: formData.get("name"),
+    type: formData.get("type"),
+  });
+
+  if (!validated.success) {
+    return { success: false, error: "Informe o nome e o tipo da categoria." };
+  }
+
+  const supabase = await createClient();
+  const { data: category, error } = await supabase
+    .from("cost_categories")
+    .insert({ name: validated.data.name, type: validated.data.type })
+    .select("id, name, type")
+    .single();
+
+  if (error || !category) {
+    return { success: false, error: "Erro ao criar categoria. Verifique se o nome já existe." };
+  }
+
+  revalidatePath("/fluxo-de-caixa");
+  return { success: true, category };
+}

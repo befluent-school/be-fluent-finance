@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { enrollStudent, type EnrollStudentState } from "@/app/actions/students";
+import { createTeacher } from "@/app/actions/teachers";
 import type { Plan, Teacher } from "@shared/types";
 
 const inputClass =
@@ -20,16 +21,38 @@ export function EnrollStudentForm({
   trigger?: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const newTeacherDialogRef = useRef<HTMLDialogElement>(null);
   const [state, action, pending] = useActionState<EnrollStudentState, FormData>(
     enrollStudent,
     undefined
   );
+
+  const [teacherOptions, setTeacherOptions] = useState<{ id: string; full_name: string }[]>(
+    teachers
+  );
+  const [selectedTeacherId, setSelectedTeacherId] = useState("");
+  const [newTeacherError, setNewTeacherError] = useState<string | null>(null);
+  const [creatingTeacher, setCreatingTeacher] = useState(false);
 
   useEffect(() => {
     if (state?.success) {
       dialogRef.current?.close();
     }
   }, [state]);
+
+  async function handleCreateTeacher(formData: FormData) {
+    setCreatingTeacher(true);
+    setNewTeacherError(null);
+    const result = await createTeacher(formData);
+    setCreatingTeacher(false);
+    if (!result.success) {
+      setNewTeacherError(result.error);
+      return;
+    }
+    setTeacherOptions((prev) => [...prev, result.teacher]);
+    setSelectedTeacherId(result.teacher.id);
+    newTeacherDialogRef.current?.close();
+  }
 
   return (
     <>
@@ -107,13 +130,25 @@ export function EnrollStudentForm({
 
             <div>
               <label className={labelClass}>Professor</label>
-              <select name="teacherId" className={inputClass}>
+              <select
+                name="teacherId"
+                value={selectedTeacherId}
+                onChange={(e) => {
+                  if (e.target.value === "__new__") {
+                    newTeacherDialogRef.current?.showModal();
+                    return;
+                  }
+                  setSelectedTeacherId(e.target.value);
+                }}
+                className={inputClass}
+              >
                 <option value="">A definir</option>
-                {teachers.map((teacher) => (
+                {teacherOptions.map((teacher) => (
                   <option key={teacher.id} value={teacher.id}>
                     {teacher.full_name}
                   </option>
                 ))}
+                <option value="__new__">+ Novo professor</option>
               </select>
             </div>
 
@@ -157,6 +192,53 @@ export function EnrollStudentForm({
               className="rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 glow-amber transition hover:brightness-105 disabled:opacity-60"
             >
               {pending ? "Salvando..." : "Cadastrar"}
+            </button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog
+        ref={newTeacherDialogRef}
+        onClose={() => setSelectedTeacherId((id) => (id === "__new__" ? "" : id))}
+        className="card-premium w-full max-w-sm rounded-lg p-0 text-ink-50 backdrop:bg-black/70"
+      >
+        <form
+          action={handleCreateTeacher}
+          className="space-y-4 p-6"
+        >
+          <h2 className="font-display text-base font-bold text-ink-50">Novo professor</h2>
+
+          <div>
+            <label className={labelClass}>Nome</label>
+            <input name="fullName" required className={inputClass} />
+          </div>
+
+          <div>
+            <label className={labelClass}>Regra de pagamento (opcional)</label>
+            <input name="paymentRuleText" placeholder="Ex: R$/hora, comissão %" className={inputClass} />
+          </div>
+
+          <div>
+            <label className={labelClass}>Valor de referência (R$/hora, opcional)</label>
+            <input name="paymentReferenceValue" type="number" step="0.01" min={0} className={inputClass} />
+          </div>
+
+          {newTeacherError && <p className="text-sm text-status-overdue">{newTeacherError}</p>}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => newTeacherDialogRef.current?.close()}
+              className="rounded-md px-4 py-2 text-sm font-medium text-ink-300 hover:text-ink-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={creatingTeacher}
+              className="rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 glow-amber transition hover:brightness-105 disabled:opacity-60"
+            >
+              {creatingTeacher ? "Salvando..." : "Cadastrar"}
             </button>
           </div>
         </form>

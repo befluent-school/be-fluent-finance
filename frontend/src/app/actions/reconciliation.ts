@@ -33,7 +33,7 @@ export async function reconcileTransaction(formData: FormData) {
       category_id: categoryId,
       amount: staging.amount,
       type: staging.pluggy_type === "CREDIT" ? "entrada" : "saida",
-      source: "pluggy",
+      source: "manual_import",
     })
     .select("id")
     .single();
