@@ -8,10 +8,8 @@ type ExtratoRow = {
   date: string;
   description: string;
   amount: number;
-  pluggy_type: "DEBIT" | "CREDIT";
-  ignored: boolean;
-  reconciled_cash_transaction_id: string | null;
-  bank_statement_imports: { account_label: string } | null;
+  type: "entrada" | "saida";
+  cost_categories: { name: string } | null;
 };
 
 const PAGE_SIZE = 50;
@@ -20,15 +18,13 @@ export default async function ExtratoPage({
   searchParams,
 }: {
   searchParams: Promise<{
-    banco?: string;
     de?: string;
     ate?: string;
     tipo?: string;
-    status?: string;
     pagina?: string;
   }>;
 }) {
-  const { banco, de, ate, tipo, status, pagina } = await searchParams;
+  const { de, ate, tipo, pagina } = await searchParams;
   const page = Math.max(1, parseInt(pagina ?? "1", 10) || 1);
 
   const supabase = await createClient();
@@ -51,27 +47,16 @@ export default async function ExtratoPage({
     redirect("/dashboard");
   }
 
-  const { data: imports } = await supabase
-    .from("bank_statement_imports")
-    .select("id, account_label")
-    .order("account_label");
-
   let query = supabase
-    .from("bank_transactions_staging")
-    .select(
-      "id, date, description, amount, pluggy_type, ignored, reconciled_cash_transaction_id, bank_statement_imports(account_label)",
-      { count: "exact" }
-    )
+    .from("cash_transactions")
+    .select("id, date, description, amount, type, cost_categories(name)", { count: "exact" })
+    .eq("source", "manual_import")
     .order("date", { ascending: false });
 
-  if (banco) query = query.eq("import_id", banco);
   if (de) query = query.gte("date", de);
   if (ate) query = query.lte("date", ate);
-  if (tipo === "credito") query = query.eq("pluggy_type", "CREDIT");
-  if (tipo === "debito") query = query.eq("pluggy_type", "DEBIT");
-  if (status === "pendente") query = query.is("reconciled_cash_transaction_id", null).eq("ignored", false);
-  if (status === "conciliada") query = query.not("reconciled_cash_transaction_id", "is", null);
-  if (status === "ignorada") query = query.eq("ignored", true);
+  if (tipo === "credito") query = query.eq("type", "entrada");
+  if (tipo === "debito") query = query.eq("type", "saida");
 
   const from = (page - 1) * PAGE_SIZE;
   const { data: transactions, count } = await query
@@ -82,46 +67,30 @@ export default async function ExtratoPage({
 
   function buildPageLink(targetPage: number) {
     const params = new URLSearchParams();
-    if (banco) params.set("banco", banco);
     if (de) params.set("de", de);
     if (ate) params.set("ate", ate);
     if (tipo) params.set("tipo", tipo);
-    if (status) params.set("status", status);
     params.set("pagina", String(targetPage));
     return `/banco/extrato?${params.toString()}`;
   }
 
   return (
     <div>
-      <p className="text-sm text-ink-300">
-        Extrato completo das transações importadas, por conta e período.
-      </p>
+      <p className="text-sm text-ink-300">Extrato completo das transações importadas, por período.</p>
 
       <div className="mt-4 flex gap-4 border-b border-ink-700 text-sm">
         <Link
           href="/banco/conciliacao"
           className="border-b-2 border-transparent px-1 pb-2 text-ink-300 hover:text-ink-50"
         >
-          Pendentes
+          Importar
         </Link>
         <span className="border-b-2 border-amber-500 px-1 pb-2 font-semibold text-ink-50">
           Extrato completo
         </span>
       </div>
 
-      <form className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5" method="get">
-        <select
-          name="banco"
-          defaultValue={banco ?? ""}
-          className="rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-50"
-        >
-          <option value="">Todas as contas</option>
-          {(imports ?? []).map((imp) => (
-            <option key={imp.id} value={imp.id}>
-              {imp.account_label}
-            </option>
-          ))}
-        </select>
+      <form className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4" method="get">
         <input
           type="date"
           name="de"
@@ -140,22 +109,12 @@ export default async function ExtratoPage({
           className="rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-50"
         >
           <option value="">Todos os tipos</option>
-          <option value="credito">Crédito</option>
-          <option value="debito">Débito</option>
-        </select>
-        <select
-          name="status"
-          defaultValue={status ?? ""}
-          className="rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-50"
-        >
-          <option value="">Todos os status</option>
-          <option value="pendente">Pendente</option>
-          <option value="conciliada">Conciliada</option>
-          <option value="ignorada">Ignorada</option>
+          <option value="credito">Entrada</option>
+          <option value="debito">Saída</option>
         </select>
         <button
           type="submit"
-          className="col-span-2 rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 hover:brightness-105 sm:col-span-1"
+          className="rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 hover:brightness-105"
         >
           Filtrar
         </button>
@@ -166,42 +125,31 @@ export default async function ExtratoPage({
           <thead>
             <tr className="border-b border-ink-700 bg-white/[0.03] text-left text-xs text-ink-300">
               <th className="px-4 py-3 font-medium">Data</th>
-              <th className="px-4 py-3 font-medium">Conta</th>
               <th className="px-4 py-3 font-medium">Descrição</th>
+              <th className="px-4 py-3 font-medium">Categoria</th>
               <th className="px-4 py-3 font-medium">Valor</th>
-              <th className="px-4 py-3 font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
-            {transactions?.map((t) => {
-              const rowStatus = t.ignored
-                ? "Ignorada"
-                : t.reconciled_cash_transaction_id
-                  ? "Conciliada"
-                  : "Pendente";
-              return (
-                <tr key={t.id} className="border-b border-ink-700/70 last:border-0 hover:bg-white/[0.03]">
-                  <td className="font-tabular px-4 py-3">
-                    {new Date(t.date).toLocaleDateString("pt-BR")}
-                  </td>
-                  <td className="px-4 py-3 text-ink-300">
-                    {t.bank_statement_imports?.account_label ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">{t.description}</td>
-                  <td
-                    className={`font-tabular px-4 py-3 font-medium ${
-                      t.pluggy_type === "CREDIT" ? "text-status-paid" : "text-status-overdue"
-                    }`}
-                  >
-                    {t.pluggy_type === "CREDIT" ? "+" : "-"} {formatCurrencyBRL(t.amount)}
-                  </td>
-                  <td className="px-4 py-3 text-ink-300">{rowStatus}</td>
-                </tr>
-              );
-            })}
+            {transactions?.map((t) => (
+              <tr key={t.id} className="border-b border-ink-700/70 last:border-0 hover:bg-white/[0.03]">
+                <td className="font-tabular px-4 py-3">
+                  {new Date(t.date).toLocaleDateString("pt-BR")}
+                </td>
+                <td className="px-4 py-3">{t.description}</td>
+                <td className="px-4 py-3 text-ink-300">{t.cost_categories?.name ?? "—"}</td>
+                <td
+                  className={`font-tabular px-4 py-3 font-medium ${
+                    t.type === "entrada" ? "text-status-paid" : "text-status-overdue"
+                  }`}
+                >
+                  {t.type === "entrada" ? "+" : "-"} {formatCurrencyBRL(t.amount)}
+                </td>
+              </tr>
+            ))}
             {(!transactions || transactions.length === 0) && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-ink-500">
+                <td colSpan={4} className="px-4 py-8 text-center text-ink-500">
                   Nenhuma transação encontrada com os filtros selecionados.
                 </td>
               </tr>

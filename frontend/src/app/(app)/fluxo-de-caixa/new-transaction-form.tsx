@@ -3,26 +3,46 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import {
   createCashTransaction,
+  updateCashTransaction,
   createCostCategory,
   type CashTransactionState,
 } from "@/app/actions/cash-transactions";
 
 type CostCategory = { id: string; name: string; type: string };
 
+type ExistingTransaction = {
+  id: string;
+  date: string;
+  description: string;
+  category_id: string | null;
+  amount: number;
+  type: "entrada" | "saida";
+  payment_method: string | null;
+};
+
 const inputClass =
   "mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500";
 const labelClass = "block text-sm font-medium text-ink-100";
 
-export function NewTransactionForm({ categories }: { categories: CostCategory[] }) {
+export function NewTransactionForm({
+  categories,
+  transaction,
+  trigger,
+}: {
+  categories: CostCategory[];
+  transaction?: ExistingTransaction;
+  trigger?: React.ReactNode;
+}) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const newCategoryDialogRef = useRef<HTMLDialogElement>(null);
+  const isEdit = Boolean(transaction);
   const [state, action, pending] = useActionState<CashTransactionState, FormData>(
-    createCashTransaction,
+    isEdit ? updateCashTransaction : createCashTransaction,
     undefined
   );
 
   const [categoryOptions, setCategoryOptions] = useState(categories);
-  const [selectedCategoryId, setSelectedCategoryId] = useState("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState(transaction?.category_id ?? "");
   const [newCategoryError, setNewCategoryError] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
 
@@ -50,9 +70,13 @@ export function NewTransactionForm({ categories }: { categories: CostCategory[] 
     <>
       <button
         onClick={() => dialogRef.current?.showModal()}
-        className="rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 glow-amber transition hover:brightness-105"
+        className={
+          trigger
+            ? "contents"
+            : "rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 glow-amber transition hover:brightness-105"
+        }
       >
-        + Novo lançamento
+        {trigger ?? "+ Novo lançamento"}
       </button>
 
       <dialog
@@ -60,12 +84,16 @@ export function NewTransactionForm({ categories }: { categories: CostCategory[] 
         className="card-premium w-full max-w-lg rounded-lg p-0 text-ink-50 backdrop:bg-black/70"
       >
         <form action={action} className="space-y-4 p-6">
-          <h2 className="font-display text-lg font-bold text-ink-50">Novo lançamento</h2>
+          <h2 className="font-display text-lg font-bold text-ink-50">
+            {isEdit ? "Editar lançamento" : "Novo lançamento"}
+          </h2>
+
+          {isEdit && <input type="hidden" name="id" value={transaction!.id} />}
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelClass}>Tipo</label>
-              <select name="type" required className={inputClass}>
+              <select name="type" required defaultValue={transaction?.type ?? "entrada"} className={inputClass}>
                 <option value="entrada">Entrada</option>
                 <option value="saida">Saída</option>
               </select>
@@ -77,14 +105,19 @@ export function NewTransactionForm({ categories }: { categories: CostCategory[] 
                 name="date"
                 type="date"
                 required
-                defaultValue={new Date().toISOString().slice(0, 10)}
+                defaultValue={transaction?.date ?? new Date().toISOString().slice(0, 10)}
                 className={inputClass}
               />
             </div>
 
             <div className="col-span-2">
               <label className={labelClass}>Descrição</label>
-              <input name="description" required className={inputClass} />
+              <input
+                name="description"
+                required
+                defaultValue={transaction?.description}
+                className={inputClass}
+              />
               {state?.errors?.description && (
                 <p className="mt-1 text-xs text-status-overdue">{state.errors.description[0]}</p>
               )}
@@ -116,7 +149,14 @@ export function NewTransactionForm({ categories }: { categories: CostCategory[] 
 
             <div>
               <label className={labelClass}>Valor</label>
-              <input name="amount" type="number" step="0.01" required className={inputClass} />
+              <input
+                name="amount"
+                type="number"
+                step="0.01"
+                required
+                defaultValue={transaction?.amount}
+                className={inputClass}
+              />
               {state?.errors?.amount && (
                 <p className="mt-1 text-xs text-status-overdue">{state.errors.amount[0]}</p>
               )}
@@ -124,7 +164,11 @@ export function NewTransactionForm({ categories }: { categories: CostCategory[] 
 
             <div className="col-span-2">
               <label className={labelClass}>Forma de pagamento</label>
-              <select name="paymentMethod" className={inputClass}>
+              <select
+                name="paymentMethod"
+                defaultValue={transaction?.payment_method ?? ""}
+                className={inputClass}
+              >
                 <option value="">—</option>
                 <option value="pix">PIX</option>
                 <option value="cartao">Cartão</option>
@@ -149,7 +193,7 @@ export function NewTransactionForm({ categories }: { categories: CostCategory[] 
               disabled={pending}
               className="rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 glow-amber transition hover:brightness-105 disabled:opacity-60"
             >
-              {pending ? "Salvando..." : "Lançar"}
+              {pending ? "Salvando..." : isEdit ? "Salvar" : "Lançar"}
             </button>
           </div>
         </form>

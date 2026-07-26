@@ -3,62 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAnthropicClient, isAnthropicConfigured } from "@/lib/anthropic";
-import type { ParsedStatementRow } from "@/lib/bank-statement-parser";
-
-export type ImportBankStatementResult =
-  | { success: true; imported: number; skipped: number }
-  | { success: false; error: string };
-
-export async function importBankStatement(
-  accountLabel: string,
-  format: "csv" | "ofx",
-  filename: string,
-  rows: ParsedStatementRow[]
-): Promise<ImportBankStatementResult> {
-  if (rows.length === 0) {
-    return { success: false, error: "Nenhuma transação encontrada no arquivo." };
-  }
-
-  const supabase = await createClient();
-
-  const { data: importRow, error: importError } = await supabase
-    .from("bank_statement_imports")
-    .insert({ account_label: accountLabel, format, filename })
-    .select("id")
-    .single();
-
-  if (importError || !importRow) {
-    return { success: false, error: "Erro ao registrar a importação." };
-  }
-
-  const stagingRows = rows.map((r) => ({
-    import_id: importRow.id,
-    date: r.date,
-    description: r.description,
-    amount: r.amount,
-    pluggy_type: r.type,
-    import_dedupe_key: `${accountLabel}|${r.date}|${r.description}|${r.amount}|${r.type}`,
-  }));
-
-  const { error: insertError, count } = await supabase
-    .from("bank_transactions_staging")
-    .upsert(stagingRows, { onConflict: "import_dedupe_key", ignoreDuplicates: true, count: "exact" });
-
-  if (insertError) {
-    return { success: false, error: `Erro ao salvar transações: ${insertError.message}` };
-  }
-
-  revalidatePath("/banco/conciliacao");
-  revalidatePath("/banco/extrato");
-  return { success: true, imported: count ?? rows.length, skipped: rows.length - (count ?? rows.length) };
-}
 
 export type CategorySuggestion = { description: string; suggestedCategory: string | null };
 
 /**
  * Sugere a categoria mais provável para cada linha do extrato, com base na
- * descrição — nunca aplica automaticamente, só preenche um valor editável
- * no preview antes da confirmação.
+ * descrição — só preenche um valor sugerido e editável no preview, nunca é
+ * aplicado sem o usuário revisar e confirmar o lote.
  */
 export async function suggestCategoriesForImport(
   descriptions: string[],
@@ -105,4 +56,55 @@ export async function suggestCategoriesForImport(
   } catch {
     return descriptions.map((description) => ({ description, suggestedCategory: null }));
   }
+}
+
+export type ConfirmBankImportRow = {
+  date: string;
+  description: string;
+  amount: number;
+  type: "CREDIT" | "DEBIT";
+  categoryId: string | null;
+};
+
+export type ConfirmBankImportResult =
+  | { success: true; imported: number }
+  | { success: false; error: string };
+
+/**
+ * Lança direto no fluxo de caixa as transações já revisadas pelo usuário no
+ * preview — sem etapa intermediária de "pendente" aguardando aprovação
+ * individual (fluxo anterior era lento demais para extratos com dezenas de
+ * linhas). A revisão acontece toda no client antes desta chamada.
+ */
+export async function confirmBankImport(
+  accountLabel: string,
+  rows: ConfirmBankImportRow[]
+): Promise<ConfirmBankImportResult> {
+  if (rows.length === 0) {
+    return { success: false, error: "Nenhuma transação para importar." };
+  }
+
+  const supabase = await createClient();
+
+  const cashRows = rows.map((r) => ({
+    date: r.date,
+    description: `${r.description} (${accountLabel})`,
+    category_id: r.categoryId,
+    amount: r.amount,
+    type: r.type === "CREDIT" ? "entrada" : "saida",
+    source: "manual_import",
+  }));
+
+  const { error, count } = await supabase
+    .from("cash_transactions")
+    .insert(cashRows, { count: "exact" });
+
+  if (error) {
+    return { success: false, error: `Erro ao lançar transações: ${error.message}` };
+  }
+
+  revalidatePath("/fluxo-de-caixa");
+  revalidatePath("/dashboard");
+  revalidatePath("/banco/extrato");
+  return { success: true, imported: count ?? rows.length };
 }

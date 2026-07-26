@@ -61,6 +61,55 @@ export async function createCashTransaction(
   return { success: true };
 }
 
+const UpdateCashTransactionSchema = CashTransactionSchema.extend({
+  id: z.uuid(),
+});
+
+export async function updateCashTransaction(
+  _state: CashTransactionState,
+  formData: FormData
+): Promise<CashTransactionState> {
+  const validated = UpdateCashTransactionSchema.safeParse({
+    id: formData.get("id"),
+    date: formData.get("date"),
+    description: formData.get("description"),
+    categoryId: formData.get("categoryId"),
+    amount: formData.get("amount"),
+    type: formData.get("type"),
+    paymentMethod: formData.get("paymentMethod"),
+    notes: formData.get("notes"),
+  });
+
+  if (!validated.success) {
+    return { errors: validated.error.flatten().fieldErrors };
+  }
+
+  const { id, date, description, categoryId, amount, type, paymentMethod, notes } =
+    validated.data;
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("cash_transactions")
+    .update({
+      date,
+      description,
+      category_id: categoryId || null,
+      amount,
+      type,
+      payment_method: paymentMethod || null,
+      notes: notes || null,
+    })
+    .eq("id", id);
+
+  if (error) {
+    return { message: "Erro ao atualizar o lançamento. Tente novamente." };
+  }
+
+  revalidatePath("/fluxo-de-caixa");
+  revalidatePath("/dashboard");
+  return { success: true };
+}
+
 const CostCategorySchema = z.object({
   name: z.string().min(2, { error: "Informe o nome da categoria." }),
   type: z.enum(["fixed", "variable"]),

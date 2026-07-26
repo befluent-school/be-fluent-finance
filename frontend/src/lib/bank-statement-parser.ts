@@ -81,10 +81,55 @@ export function parseCsvStatement(
   return parsed;
 }
 
+/**
+ * Extratos de alguns bancos/gateways (ex: Asaas) têm linhas de metadados
+ * (período, saldo inicial) antes do cabeçalho de verdade — sheet_to_json
+ * ingênuo trataria a primeira linha como cabeçalho e nunca encontraria as
+ * colunas certas. Varremos as primeiras linhas procurando a que tem mais
+ * células preenchidas e bate com pelo menos um nome de coluna conhecido.
+ */
+function findHeaderRowIndex(rows: unknown[][]): number {
+  const MAX_ROWS_TO_SCAN = 20;
+  const allCandidates = [...DATE_COLUMN_NAMES, ...DESCRIPTION_COLUMN_NAMES, ...AMOUNT_COLUMN_NAMES];
+
+  let bestIndex = 0;
+  let bestScore = -1;
+
+  for (let i = 0; i < Math.min(rows.length, MAX_ROWS_TO_SCAN); i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+
+    const normalizedCells = row.map((c) => normalizeHeader(String(c ?? "")));
+    const nonEmptyCount = normalizedCells.filter((c) => c !== "").length;
+    const matchesKnownColumn = normalizedCells.some((c) => allCandidates.includes(c));
+
+    if (matchesKnownColumn && nonEmptyCount > bestScore) {
+      bestScore = nonEmptyCount;
+      bestIndex = i;
+    }
+  }
+
+  return bestScore >= 0 ? bestIndex : 0;
+}
+
 export function readSheetAsRows(binaryData: string): Record<string, unknown>[] {
   const workbook = XLSX.read(binaryData, { type: "binary" });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+  const allRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
+
+  const headerIndex = findHeaderRowIndex(allRows);
+  const headerRow = (allRows[headerIndex] ?? []).map((c) => String(c ?? "").trim());
+  const dataRows = allRows.slice(headerIndex + 1);
+
+  return dataRows
+    .filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""))
+    .map((row) => {
+      const record: Record<string, unknown> = {};
+      headerRow.forEach((header, i) => {
+        if (header) record[header] = row[i] ?? "";
+      });
+      return record;
+    });
 }
 
 /**

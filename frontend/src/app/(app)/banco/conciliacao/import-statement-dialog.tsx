@@ -8,29 +8,32 @@ import {
   parseOfxStatement,
   type ParsedStatementRow,
 } from "@/lib/bank-statement-parser";
-import { importBankStatement, suggestCategoriesForImport } from "@/app/actions/bank-import";
+import { confirmBankImport, suggestCategoriesForImport } from "@/app/actions/bank-import";
 
 const inputClass =
   "mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500";
 
-export function ImportStatementDialog({ categoryNames }: { categoryNames: string[] }) {
+type Category = { id: string; name: string };
+
+export function ImportStatementDialog({ categories }: { categories: Category[] }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<"select" | "mapping" | "preview" | "done">("select");
   const [accountLabel, setAccountLabel] = useState("");
   const [fileName, setFileName] = useState("");
-  const [format, setFormat] = useState<"csv" | "ofx">("csv");
   const [sheetRows, setSheetRows] = useState<Record<string, unknown>[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [dateCol, setDateCol] = useState("");
   const [descCol, setDescCol] = useState("");
   const [amountCol, setAmountCol] = useState("");
   const [rows, setRows] = useState<ParsedStatementRow[]>([]);
-  const [suggestions, setSuggestions] = useState<Map<string, string | null>>(new Map());
+  const [rowCategories, setRowCategories] = useState<(string | null)[]>([]);
   const [isPending, startTransition] = useTransition();
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [imported, setImported] = useState<number | null>(null);
+
+  const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
 
   function reset() {
     setStep("select");
@@ -42,9 +45,9 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
     setDescCol("");
     setAmountCol("");
     setRows([]);
-    setSuggestions(new Map());
+    setRowCategories([]);
     setParseError(null);
-    setResult(null);
+    setImported(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -53,14 +56,19 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
     dialogRef.current?.showModal();
   }
 
-  function runSuggestions(parsedRows: ParsedStatementRow[]) {
-    if (categoryNames.length === 0) return;
+  function goToPreview(parsedRows: ParsedStatementRow[]) {
+    setRows(parsedRows);
+    setRowCategories(parsedRows.map(() => null));
+    setStep("preview");
+
+    if (categories.length === 0) return;
     setIsSuggesting(true);
-    suggestCategoriesForImport(parsedRows.map((r) => r.description), categoryNames)
+    suggestCategoriesForImport(
+      parsedRows.map((r) => r.description),
+      categories.map((c) => c.name)
+    )
       .then((results) => {
-        const map = new Map<string, string | null>();
-        for (const r of results) map.set(r.description, r.suggestedCategory);
-        setSuggestions(map);
+        setRowCategories(results.map((r) => r.suggestedCategory));
       })
       .finally(() => setIsSuggesting(false));
   }
@@ -71,9 +79,7 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
     setFileName(file.name);
     setParseError(null);
 
-    const lower = file.name.toLowerCase();
-    const isOfx = lower.endsWith(".ofx");
-    setFormat(isOfx ? "ofx" : "csv");
+    const isOfx = file.name.toLowerCase().endsWith(".ofx");
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -86,9 +92,7 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
             setParseError("Não foi possível encontrar transações no arquivo OFX.");
             return;
           }
-          setRows(parsed);
-          setStep("preview");
-          runSuggestions(parsed);
+          goToPreview(parsed);
           return;
         }
 
@@ -116,9 +120,7 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
             setStep("mapping");
             return;
           }
-          setRows(parsed);
-          setStep("preview");
-          runSuggestions(parsed);
+          goToPreview(parsed);
         } else {
           setStep("mapping");
         }
@@ -146,16 +148,21 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
       return;
     }
     setParseError(null);
-    setRows(parsed);
-    setStep("preview");
-    runSuggestions(parsed);
+    goToPreview(parsed);
   }
 
   function handleConfirmImport() {
     startTransition(async () => {
-      const res = await importBankStatement(accountLabel, format, fileName, rows);
+      const payload = rows.map((row, i) => ({
+        date: row.date,
+        description: row.description,
+        amount: row.amount,
+        type: row.type,
+        categoryId: rowCategories[i] ? (categoryByName.get(rowCategories[i]!) ?? null) : null,
+      }));
+      const res = await confirmBankImport(accountLabel, payload);
       if (res.success) {
-        setResult({ imported: res.imported, skipped: res.skipped });
+        setImported(res.imported);
         setStep("done");
       } else {
         setParseError(res.error);
@@ -174,7 +181,7 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
 
       <dialog
         ref={dialogRef}
-        className="card-premium w-full max-w-2xl rounded-lg p-0 text-ink-50 backdrop:bg-black/70"
+        className="card-premium w-full max-w-3xl rounded-lg p-0 text-ink-50 backdrop:bg-black/70"
       >
         <div className="space-y-4 p-6">
           <div className="flex items-center justify-between">
@@ -191,9 +198,9 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
           {step === "select" && (
             <div className="space-y-4">
               <p className="text-sm text-ink-300">
-                Exporte o extrato do seu banco (CSV, Excel ou OFX) e envie aqui. As transações
-                aparecerão em &quot;Pendentes&quot; para você confirmar antes de virarem
-                lançamentos reais.
+                Exporte o extrato do seu banco (CSV, Excel ou OFX) e envie aqui. Você revisa as
+                categorias antes de confirmar, e as transações já entram direto no fluxo de
+                caixa.
               </p>
 
               <div>
@@ -323,18 +330,18 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
             <div className="space-y-4">
               <p className="text-sm text-ink-300">
                 Arquivo: <span className="text-ink-100">{fileName}</span> · {rows.length}{" "}
-                transação(ões) encontrada(s)
+                transação(ões) · revise as categorias antes de confirmar
                 {isSuggesting && " · sugerindo categorias com IA..."}
               </p>
 
-              <div className="max-h-80 overflow-y-auto card-premium rounded-md">
+              <div className="max-h-96 overflow-y-auto card-premium rounded-md">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-ink-700 bg-white/[0.03] text-xs text-ink-300">
                       <th className="px-3 py-2 font-medium">Data</th>
                       <th className="px-3 py-2 font-medium">Descrição</th>
                       <th className="px-3 py-2 font-medium">Valor</th>
-                      <th className="px-3 py-2 font-medium">Categoria sugerida</th>
+                      <th className="px-3 py-2 font-medium">Categoria</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -351,8 +358,23 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
                         >
                           {row.type === "CREDIT" ? "+" : "-"} {row.amount.toFixed(2)}
                         </td>
-                        <td className="px-3 py-2 text-xs text-ink-500">
-                          {suggestions.get(row.description) ?? "—"}
+                        <td className="px-3 py-2">
+                          <select
+                            value={rowCategories[i] ?? ""}
+                            onChange={(e) => {
+                              const next = [...rowCategories];
+                              next[i] = e.target.value || null;
+                              setRowCategories(next);
+                            }}
+                            className="w-full rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-xs text-ink-50"
+                          >
+                            <option value="">Sem categoria</option>
+                            {categories.map((c) => (
+                              <option key={c.id} value={c.name}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                       </tr>
                     ))}
@@ -376,18 +398,17 @@ export function ImportStatementDialog({ categoryNames }: { categoryNames: string
                   onClick={handleConfirmImport}
                   className="rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 text-sm font-semibold text-ink-950 glow-amber transition hover:brightness-105 disabled:opacity-60"
                 >
-                  {isPending ? "Importando..." : `Importar ${rows.length} transação(ões)`}
+                  {isPending ? "Lançando..." : `Confirmar e lançar ${rows.length} transação(ões)`}
                 </button>
               </div>
             </div>
           )}
 
-          {step === "done" && result && (
+          {step === "done" && imported !== null && (
             <div className="space-y-4">
               <p className="text-sm text-ink-300">
-                {result.imported} transação(ões) importada(s)
-                {result.skipped > 0 && ` · ${result.skipped} já existente(s), ignorada(s)`}. Vá em
-                &quot;Pendentes&quot; para conciliar.
+                {imported} transação(ões) lançada(s) no fluxo de caixa. Confira em &quot;Extrato
+                completo&quot; ou na aba Fluxo de Caixa.
               </p>
               <div className="flex justify-end pt-2">
                 <button

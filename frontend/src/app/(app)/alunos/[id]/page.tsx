@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatCurrencyBRL } from "@shared/finance";
+import type { Plan, Teacher } from "@shared/types";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { EditStudentDialog } from "./edit-student-dialog";
 
 type InvoiceRow = {
   id: string;
@@ -24,6 +26,9 @@ type StudentDetail = {
     id: string;
     status: string;
     monthly_value: number;
+    due_day: number;
+    plan_id: string;
+    teacher_id: string | null;
     plans: { name: string } | null;
     teachers: { full_name: string } | null;
   }[];
@@ -40,7 +45,7 @@ export default async function StudentDetailPage({
   const { data: student } = await supabase
     .from("students")
     .select(
-      "id, full_name, payer_name, cpf, phone, email, enrollments(id, status, monthly_value, plans(name), teachers(full_name))"
+      "id, full_name, payer_name, cpf, phone, email, enrollments(id, status, monthly_value, due_day, plan_id, teacher_id, plans(name), teachers(full_name))"
     )
     .eq("id", id)
     .single<StudentDetail>();
@@ -51,18 +56,40 @@ export default async function StudentDetailPage({
 
   const enrollmentIds = student.enrollments.map((e: { id: string }) => e.id);
 
-  const { data: invoices } = await supabase
-    .from("invoices")
-    .select("id, reference_month, amount, due_date, paid_date, payment_method, status")
-    .in("enrollment_id", enrollmentIds.length > 0 ? enrollmentIds : [""])
-    .order("reference_month", { ascending: false })
-    .returns<InvoiceRow[]>();
+  const [{ data: invoices }, { data: plans }, { data: teachers }] = await Promise.all([
+    supabase
+      .from("invoices")
+      .select("id, reference_month, amount, due_date, paid_date, payment_method, status")
+      .in("enrollment_id", enrollmentIds.length > 0 ? enrollmentIds : [""])
+      .order("reference_month", { ascending: false })
+      .returns<InvoiceRow[]>(),
+    supabase.from("plans").select("*").eq("active", true).returns<Plan[]>(),
+    supabase.from("teachers").select("*").eq("active", true).returns<Teacher[]>(),
+  ]);
 
   const enrollment = student.enrollments[0];
 
   return (
     <div>
-      <h1 className="font-display text-2xl font-bold text-ink-50">{student.full_name}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="font-display text-2xl font-bold text-ink-50">{student.full_name}</h1>
+        <EditStudentDialog
+          student={student}
+          enrollment={
+            enrollment
+              ? {
+                  id: enrollment.id,
+                  monthly_value: enrollment.monthly_value,
+                  due_day: enrollment.due_day,
+                  plan_id: enrollment.plan_id,
+                  teacher_id: enrollment.teacher_id,
+                }
+              : null
+          }
+          plans={plans ?? []}
+          teachers={teachers ?? []}
+        />
+      </div>
       <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-ink-300">
         {student.payer_name && <span>Responsável: {student.payer_name}</span>}
         {student.phone && <span>{student.phone}</span>}
