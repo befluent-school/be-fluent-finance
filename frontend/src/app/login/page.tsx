@@ -1,10 +1,11 @@
-"use client";
+import { LoginForm } from "./login-form";
 
-import { useActionState } from "react";
-import { login, type LoginState } from "@/app/actions/auth";
-
-export default function LoginPage() {
-  const [state, action, pending] = useActionState<LoginState, FormData>(login, undefined);
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink-950 px-4">
@@ -16,49 +17,7 @@ export default function LoginPage() {
         <h1 className="font-display gradient-text text-3xl font-bold">Be Fluent</h1>
         <p className="mt-1 text-sm text-ink-300">Gestão financeira e administrativa</p>
 
-        <form action={action} className="mt-8 space-y-4">
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-ink-100">
-              E-mail
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              className="mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 placeholder:text-ink-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-            />
-            {state?.errors?.email && (
-              <p className="mt-1 text-xs text-status-overdue">{state.errors.email[0]}</p>
-            )}
-          </div>
-
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-ink-100">
-              Senha
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              className="mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 placeholder:text-ink-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-            />
-            {state?.errors?.password && (
-              <p className="mt-1 text-xs text-status-overdue">{state.errors.password[0]}</p>
-            )}
-          </div>
-
-          {state?.message && <p className="text-sm text-status-overdue">{state.message}</p>}
-
-          <button
-            type="submit"
-            disabled={pending}
-            className="w-full rounded-md bg-gradient-to-b from-amber-300 to-amber-500 px-4 py-2 font-semibold text-ink-950 glow-amber transition hover:brightness-105 disabled:opacity-60"
-          >
-            {pending ? "Entrando..." : "Entrar"}
-          </button>
-        </form>
+        <LoginForm googleError={error === "google"} />
       </div>
     </main>
   );

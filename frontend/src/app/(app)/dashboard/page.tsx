@@ -14,6 +14,10 @@ type PlanTicket = {
   ltv_medio: number;
 };
 
+// Repasses entre as próprias contas da Be Fluent não são receita/despesa
+// real — mesmo critério já usado no Fluxo de Caixa para não inflar totais.
+const TRANSFER_CATEGORY_NAME = "Transferência entre Contas";
+
 export default async function DashboardPage() {
   const supabase = await createClient();
 
@@ -45,6 +49,9 @@ export default async function DashboardPage() {
     { data: cacTarget },
     { data: ltvCacTarget },
     { data: upcomingTasks },
+    { data: monthCashTransactions },
+    { data: allCashTransactions },
+    { data: cardPaidInvoices },
   ] = await Promise.all([
     supabase.from("v_mrr").select("mrr").single(),
     supabase.from("v_ticket_medio_por_plano").select("*").returns<PlanTicket[]>(),
@@ -80,6 +87,26 @@ export default async function DashboardPage() {
       .eq("completed", false)
       .lte("due_date", taskAlertThresholdStr)
       .order("due_date"),
+    // Caixa disponível: entradas já confirmadas em extrato bancário este mês.
+    supabase
+      .from("cash_transactions")
+      .select("amount, type, cost_categories(name)")
+      .gte("date", referenceMonth)
+      .returns<{ amount: number; type: "entrada" | "saida"; cost_categories: { name: string } | null }[]>(),
+    // Saldo total: todo o histórico de cash_transactions, sem filtro de mês.
+    supabase
+      .from("cash_transactions")
+      .select("amount, type")
+      .returns<{ amount: number; type: "entrada" | "saida" }[]>(),
+    // A receber: mensalidades pagas com cartão este mês — o dinheiro só
+    // conta como "caixa disponível" quando confirmado num extrato
+    // importado (categoria "Mensalidade de Aluno"), não estimamos prazo.
+    supabase
+      .from("invoices")
+      .select("total_paid, paid_date")
+      .eq("payment_method", "cartao")
+      .not("paid_date", "is", null)
+      .gte("paid_date", referenceMonth),
   ]);
 
   const mrr = mrrData?.mrr ?? 0;
@@ -106,43 +133,56 @@ export default async function DashboardPage() {
   const tasksOverdue = (upcomingTasks ?? []).filter((t) => t.due_date < todayStr).length;
   const tasksDueSoon = (upcomingTasks ?? []).length;
 
+  const caixaDisponivel = (monthCashTransactions ?? [])
+    .filter((t) => t.type === "entrada" && t.cost_categories?.name !== TRANSFER_CATEGORY_NAME)
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const saldoTotalCaixa = (allCashTransactions ?? []).reduce(
+    (sum, t) => sum + (t.type === "entrada" ? t.amount : -t.amount),
+    0
+  );
+
+  const aReceberCartao = (cardPaidInvoices ?? []).reduce(
+    (sum, inv) => sum + (inv.total_paid ?? 0),
+    0
+  );
+
+  const ticketTotals = plansWithStudents.reduce(
+    (acc, p) => {
+      acc.students += p.active_students;
+      acc.ticket += p.ticket_medio * p.active_students;
+      acc.ltv += p.ltv_medio * p.active_students;
+      return acc;
+    },
+    { students: 0, ticket: 0, ltv: 0 }
+  );
+
   return (
     <div>
       <p className="text-sm text-ink-300">Visão executiva em tempo real.</p>
 
-      {/* Inadimplência sobe para o topo em mobile — é o motivo mais comum de
-          checar o app pelo celular fora do escritório. */}
-      <div className="mt-6 md:hidden">
+      <h2 className="mt-6 text-lg font-semibold text-ink-50">Caixa</h2>
+      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <KpiCard
-          label="Inadimplência"
-          value={formatCurrencyBRL(inadimplenciaTotal)}
-          hint={`${faturasAtrasadas} fatura(s) em atraso`}
-          tone={inadimplenciaTotal > 0 ? "negative" : "positive"}
+          label="Caixa disponível (mês)"
+          value={formatCurrencyBRL(caixaDisponivel)}
+          hint="Já confirmado em extrato bancário"
+          explanation="Soma das entradas já confirmadas em extrato bancário importado neste mês, excluindo transferências entre contas próprias. É dinheiro que já está de fato na conta."
+          tone="positive"
         />
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
-        <KpiCard label="MRR" value={formatCurrencyBRL(mrr)} hint="Receita recorrente mensal" />
-        <div className="hidden md:block">
-          <KpiCard
-            label="Inadimplência"
-            value={formatCurrencyBRL(inadimplenciaTotal)}
-            hint={`${faturasAtrasadas} fatura(s) em atraso`}
-            tone={inadimplenciaTotal > 0 ? "negative" : "positive"}
-          />
-        </div>
         <KpiCard
-          label="Ticket médio"
-          value={formatCurrencyBRL(ticketMedioGeral)}
-          hint={`${totalActiveStudents} aluno(s) ativo(s)`}
+          label="A receber (mensalidades no cartão)"
+          value={formatCurrencyBRL(aReceberCartao)}
+          hint="Aluno pagou, aguardando confirmação no extrato"
+          explanation="Mensalidades deste mês pagas com cartão de crédito, já marcadas como pagas em Mensalidades, mas ainda não confirmadas em nenhum extrato importado — o valor exato e a data de queda dependem do repasse do gateway."
+          tone="warning"
         />
-        {canViewNetProfit && (
-          <KpiCard
-            label="Lucro líquido (mês)"
-            value={formatCurrencyBRL(mrr - (cacData?.marketing_spend ?? 0))}
-            hint="MRR menos custos de marketing do mês"
-          />
-        )}
+        <KpiCard
+          label="Saldo total em caixa"
+          value={formatCurrencyBRL(saldoTotalCaixa)}
+          hint="Todo o histórico de extratos importados"
+          explanation="Soma de todas as entradas menos todas as saídas já confirmadas em extrato, desde o início — é o mesmo saldo acumulado exibido em Fluxo de Caixa."
+        />
       </div>
 
       {tasksDueSoon > 0 && (
@@ -160,6 +200,38 @@ export default async function DashboardPage() {
         </Link>
       )}
 
+      <h2 className="mt-8 text-lg font-semibold text-ink-50">Indicadores do mês</h2>
+      <div className="mt-3 grid grid-cols-1 gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+        <KpiCard
+          label="Inadimplência"
+          value={formatCurrencyBRL(inadimplenciaTotal)}
+          hint={`${faturasAtrasadas} fatura(s) em atraso`}
+          explanation="Soma das mensalidades com vencimento já passado e ainda não pagas, em qualquer mês (não só o atual)."
+          tone={inadimplenciaTotal > 0 ? "negative" : "positive"}
+          className="order-first sm:order-none"
+        />
+        <KpiCard
+          label="MRR"
+          value={formatCurrencyBRL(mrr)}
+          hint="Receita recorrente mensal"
+          explanation="Soma das mensalidades de todos os alunos com matrícula ativa — é um valor contratual (o que deveria entrar todo mês), não o que já caiu na conta."
+        />
+        <KpiCard
+          label="Ticket médio"
+          value={formatCurrencyBRL(ticketMedioGeral)}
+          hint={`${totalActiveStudents} aluno(s) ativo(s)`}
+          explanation="MRR dividido pelo número de alunos ativos — quanto cada aluno paga, em média, por mês."
+        />
+        {canViewNetProfit && (
+          <KpiCard
+            label="Lucro líquido (mês)"
+            value={formatCurrencyBRL(mrr - (cacData?.marketing_spend ?? 0))}
+            hint="MRR menos custos de marketing do mês"
+            explanation="Estimativa contratual: MRR menos o gasto de marketing lançado no fluxo de caixa este mês. Não subtrai outros custos (professores, taxas, etc) — para o resultado real, consulte o Fluxo de Caixa."
+          />
+        )}
+      </div>
+
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <LtvCacHealth ltv={ltvMedioGeral} cac={cac} minRatioTarget={ltvCacTarget?.min_ratio} />
         <KpiCard
@@ -172,6 +244,7 @@ export default async function DashboardPage() {
                 }`
               : "Sem gasto de marketing lançado neste mês"
           }
+          explanation="Custo de Aquisição de Cliente: gasto em Marketing e Vendas este mês, dividido pelo número de alunos novos no mesmo período."
           tone={
             cacTarget?.max_cac != null && cac > cacTarget.max_cac
               ? "negative"
@@ -197,6 +270,25 @@ export default async function DashboardPage() {
           remainingLabel={(remaining) => `Faltam ${remaining} aluno(s) para bater a meta.`}
         />
       </div>
+      {(cacTarget?.max_cac != null || ltvCacTarget?.min_ratio != null) && (
+        <div className="mt-3 flex flex-wrap gap-4 text-xs text-ink-300">
+          {cacTarget?.max_cac != null && (
+            <span>
+              CAC máx. da meta:{" "}
+              <strong className={cac > cacTarget.max_cac ? "text-status-overdue" : "text-status-paid"}>
+                {formatCurrencyBRL(cacTarget.max_cac)}
+              </strong>{" "}
+              {cac > cacTarget.max_cac ? "(acima da meta)" : "(dentro da meta)"}
+            </span>
+          )}
+          {ltvCacTarget?.min_ratio != null && (
+            <span>
+              LTV:CAC mín. da meta:{" "}
+              <strong className="text-ink-50">{ltvCacTarget.min_ratio.toFixed(1)}:1</strong>
+            </span>
+          )}
+        </div>
+      )}
 
       <h2 className="mt-8 text-lg font-semibold text-ink-50">Ticket médio e LTV por plano</h2>
       <div className="mt-3 card-premium overflow-x-auto rounded-md">
@@ -226,6 +318,20 @@ export default async function DashboardPage() {
               </tr>
             ))}
           </tbody>
+          {ticketTotals.students > 0 && (
+            <tfoot>
+              <tr className="border-t border-ink-700 bg-white/[0.03] font-semibold text-ink-50">
+                <td className="px-4 py-3">Total</td>
+                <td className="font-tabular px-4 py-3">{ticketTotals.students}</td>
+                <td className="font-tabular px-4 py-3">
+                  {formatCurrencyBRL(ticketTotals.ticket / ticketTotals.students)}
+                </td>
+                <td className="font-tabular px-4 py-3">
+                  {formatCurrencyBRL(ticketTotals.ltv / ticketTotals.students)}
+                </td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 
