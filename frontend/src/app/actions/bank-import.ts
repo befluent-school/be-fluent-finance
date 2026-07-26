@@ -67,7 +67,7 @@ export type ConfirmBankImportRow = {
 };
 
 export type ConfirmBankImportResult =
-  | { success: true; imported: number }
+  | { success: true; imported: number; skipped: number }
   | { success: false; error: string };
 
 /**
@@ -75,6 +75,11 @@ export type ConfirmBankImportResult =
  * preview — sem etapa intermediária de "pendente" aguardando aprovação
  * individual (fluxo anterior era lento demais para extratos com dezenas de
  * linhas). A revisão acontece toda no client antes desta chamada.
+ *
+ * Deduplicado por (data + descrição original + valor + tipo): reimportar o
+ * mesmo extrato, ou uma transação que já apareceu em outra importação,
+ * não cria lançamento duplicado — a chave usa a descrição ANTES de anexar
+ * o rótulo da conta, para não depender de o usuário digitar o mesmo texto.
  */
 export async function confirmBankImport(
   accountLabel: string,
@@ -93,18 +98,21 @@ export async function confirmBankImport(
     amount: r.amount,
     type: r.type === "CREDIT" ? "entrada" : "saida",
     source: "manual_import",
+    dedupe_key: `${r.date}|${r.description.trim().toLowerCase()}|${r.amount}|${r.type}`,
   }));
 
   const { error, count } = await supabase
     .from("cash_transactions")
-    .insert(cashRows, { count: "exact" });
+    .upsert(cashRows, { onConflict: "dedupe_key", ignoreDuplicates: true, count: "exact" });
 
   if (error) {
     return { success: false, error: `Erro ao lançar transações: ${error.message}` };
   }
 
+  const imported = count ?? rows.length;
+
   revalidatePath("/fluxo-de-caixa");
   revalidatePath("/dashboard");
   revalidatePath("/banco/extrato");
-  return { success: true, imported: count ?? rows.length };
+  return { success: true, imported, skipped: rows.length - imported };
 }

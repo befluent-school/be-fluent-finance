@@ -85,7 +85,7 @@ export async function markInvoicePaid(
       interest_amount: interestAmount,
     })
     .eq("id", validated.data.invoiceId)
-    .select("id, amount, enrollment_id, enrollments(students(full_name))")
+    .select("id, amount")
     .single();
 
   if (error || !invoice) {
@@ -96,30 +96,11 @@ export async function markInvoicePaid(
 
   await supabase.from("invoices").update({ total_paid: total }).eq("id", invoice.id);
 
-  // Toda mensalidade paga vira automaticamente uma entrada no fluxo de
-  // caixa — elimina a duplicação/dessincronia que a planilha tinha entre
-  // "CONTROLE DE MENSALIDADES" e "FLUXO DE CAIXA".
-  const studentName =
-    (invoice.enrollments as unknown as { students: { full_name: string } | null })?.students
-      ?.full_name ?? "aluno";
-
-  const description =
-    lateFeeAmount > 0 || interestAmount > 0
-      ? `Mensalidade - ${studentName} (+ multa/juros)`
-      : `Mensalidade - ${studentName}`;
-
-  await supabase.from("cash_transactions").insert({
-    date: validated.data.paidDate,
-    description,
-    amount: total,
-    type: "entrada",
-    payment_method: validated.data.paymentMethod,
-    invoice_id: invoice.id,
-    source: "manual",
-  });
-
+  // Mensalidades não lançam mais automaticamente no fluxo de caixa — o
+  // dinheiro real só entra ali quando o extrato do banco correspondente é
+  // importado. Manter os dois em sincronia manual causava duplicidade
+  // quando a mesma mensalidade também aparecia no extrato importado.
   revalidatePath("/mensalidades");
   revalidatePath("/alunos");
-  revalidatePath("/fluxo-de-caixa");
   return undefined;
 }

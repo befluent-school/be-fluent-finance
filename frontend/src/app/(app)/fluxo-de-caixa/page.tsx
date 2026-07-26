@@ -24,6 +24,12 @@ const SOURCE_LABEL: Record<string, string> = {
   manual_import: "Extrato importado",
 };
 
+// Repasses entre as próprias contas da Be Fluent (ex: Asaas -> Inter)
+// aparecem nos extratos de ambos os bancos — não são receita/despesa real,
+// então ficam de fora dos totais para não contar em dobro, mas continuam
+// visíveis na tabela de lançamentos para rastreabilidade.
+const TRANSFER_CATEGORY_NAME = "Transferência entre Contas";
+
 function monthsAgo(n: number): string {
   const d = new Date();
   d.setUTCDate(1);
@@ -113,13 +119,17 @@ export default async function FluxoDeCaixaPage({
       .gte("date", `${monthsAgo(5)}-01`),
     supabase
       .from("cash_transactions")
-      .select("amount, type")
+      .select("amount, type, cost_categories(name)")
       .gte("date", previousPeriodStart)
       .lt("date", previousPeriodEnd)
-      .returns<{ amount: number; type: "entrada" | "saida" }[]>(),
+      .returns<{ amount: number; type: "entrada" | "saida"; cost_categories: { name: string } | null }[]>(),
   ]);
 
-  const totals = (periodTransactions ?? []).reduce(
+  const nonTransferTransactions = (periodTransactions ?? []).filter(
+    (t) => t.cost_categories?.name !== TRANSFER_CATEGORY_NAME
+  );
+
+  const totals = nonTransferTransactions.reduce(
     (acc, t) => {
       acc[t.type] += t.amount;
       return acc;
@@ -127,14 +137,19 @@ export default async function FluxoDeCaixaPage({
     { entrada: 0, saida: 0 }
   );
 
-  const previousTotals = (previousPeriodTransactions ?? []).reduce(
-    (acc, t) => {
-      acc[t.type] += t.amount;
-      return acc;
-    },
-    { entrada: 0, saida: 0 }
-  );
+  const previousTotals = (previousPeriodTransactions ?? [])
+    .filter((t) => t.cost_categories?.name !== TRANSFER_CATEGORY_NAME)
+    .reduce(
+      (acc, t) => {
+        acc[t.type] += t.amount;
+        return acc;
+      },
+      { entrada: 0, saida: 0 }
+    );
 
+  // running_balance da view já inclui transferências (é um saldo bancário
+  // real, não um "resultado do negócio") — mantido como está, só os totais
+  // de entrada/saída do card e o resumo por categoria excluem transferências.
   const currentBalance = periodTransactions?.[0]?.running_balance ?? 0;
   const previousBalance = currentBalance - totals.entrada + totals.saida;
 

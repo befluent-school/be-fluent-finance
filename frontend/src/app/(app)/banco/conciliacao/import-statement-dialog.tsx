@@ -31,7 +31,9 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
   const [isPending, startTransition] = useTransition();
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [imported, setImported] = useState<number | null>(null);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(
+    null
+  );
 
   const categoryByName = new Map(categories.map((c) => [c.name, c.id]));
 
@@ -47,7 +49,7 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
     setRows([]);
     setRowCategories([]);
     setParseError(null);
-    setImported(null);
+    setImportResult(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -162,7 +164,7 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
       }));
       const res = await confirmBankImport(accountLabel, payload);
       if (res.success) {
-        setImported(res.imported);
+        setImportResult({ imported: res.imported, skipped: res.skipped });
         setStep("done");
       } else {
         setParseError(res.error);
@@ -404,11 +406,13 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
             </div>
           )}
 
-          {step === "done" && imported !== null && (
+          {step === "done" && importResult !== null && (
             <div className="space-y-4">
               <p className="text-sm text-ink-300">
-                {imported} transação(ões) lançada(s) no fluxo de caixa. Confira em &quot;Extrato
-                completo&quot; ou na aba Fluxo de Caixa.
+                {importResult.imported} transação(ões) lançada(s) no fluxo de caixa
+                {importResult.skipped > 0 &&
+                  ` · ${importResult.skipped} já existente(s), ignorada(s) automaticamente`}
+                . Confira em &quot;Extrato completo&quot; ou na aba Fluxo de Caixa.
               </p>
               <div className="flex justify-end pt-2">
                 <button
