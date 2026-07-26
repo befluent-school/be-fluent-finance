@@ -1,8 +1,10 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatCurrencyBRL } from "@shared/finance";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { GenerateInvoicesButton } from "./generate-invoices-button";
 import { MarkPaidForm } from "./mark-paid-form";
+import { DeleteInvoiceButton } from "./delete-invoice-button";
 
 type InvoiceRow = {
   id: string;
@@ -17,10 +19,9 @@ type InvoiceRow = {
   } | null;
 };
 
-function nextMonth(referenceMonth: string): string {
+function addMonths(referenceMonth: string, delta: number): string {
   const [year, month] = referenceMonth.split("-").map(Number);
-  const next = new Date(Date.UTC(year, month, 1));
-  return next.toISOString().slice(0, 7);
+  return new Date(Date.UTC(year, month - 1 + delta, 1)).toISOString().slice(0, 7);
 }
 
 export default async function MensalidadesPage({
@@ -30,6 +31,8 @@ export default async function MensalidadesPage({
 }) {
   const { mes } = await searchParams;
   const referenceMonth = mes ?? new Date().toISOString().slice(0, 7);
+  const previousMonth = addMonths(referenceMonth, -1);
+  const nextMonthValue = addMonths(referenceMonth, 1);
 
   const supabase = await createClient();
   const { data: invoices } = await supabase
@@ -38,7 +41,7 @@ export default async function MensalidadesPage({
       "id, amount, due_date, paid_date, payment_method, effective_status, enrollments(students(id, full_name), plans(name))"
     )
     .gte("reference_month", `${referenceMonth}-01`)
-    .lt("reference_month", `${nextMonth(referenceMonth)}-01`)
+    .lt("reference_month", `${nextMonthValue}-01`)
     .order("due_date")
     .returns<InvoiceRow[]>();
 
@@ -53,14 +56,25 @@ export default async function MensalidadesPage({
   return (
     <div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm text-ink-300">
-            Mês de referência:{" "}
+        <div className="flex items-center gap-3">
+          <Link
+            href={`/mensalidades?mes=${previousMonth}`}
+            className="rounded-md px-2 py-1 text-sm text-ink-300 hover:bg-white/[0.05] hover:text-ink-50"
+          >
+            ‹
+          </Link>
+          <p className="text-sm capitalize text-ink-300">
             {new Date(`${referenceMonth}-01`).toLocaleDateString("pt-BR", {
               month: "long",
               year: "numeric",
             })}
           </p>
+          <Link
+            href={`/mensalidades?mes=${nextMonthValue}`}
+            className="rounded-md px-2 py-1 text-sm text-ink-300 hover:bg-white/[0.05] hover:text-ink-50"
+          >
+            ›
+          </Link>
         </div>
         <GenerateInvoicesButton referenceMonth={referenceMonth} />
       </div>
@@ -97,6 +111,7 @@ export default async function MensalidadesPage({
               <th className="px-4 py-3 font-medium">Forma</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Ação</th>
+              <th className="px-4 py-3 font-medium"></th>
             </tr>
           </thead>
           <tbody>
@@ -124,11 +139,14 @@ export default async function MensalidadesPage({
                     />
                   )}
                 </td>
+                <td className="px-4 py-3">
+                  <DeleteInvoiceButton invoiceId={invoice.id} />
+                </td>
               </tr>
             ))}
             {(!invoices || invoices.length === 0) && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-ink-500">
+                <td colSpan={8} className="px-4 py-8 text-center text-ink-500">
                   Nenhuma mensalidade gerada para este mês ainda.
                 </td>
               </tr>

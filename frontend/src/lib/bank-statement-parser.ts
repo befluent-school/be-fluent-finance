@@ -35,8 +35,23 @@ function parseBRDate(raw: string): string | null {
   return null;
 }
 
-function parseAmount(raw: string): number {
-  const cleaned = raw.trim().replace(/\./g, "").replace(",", ".").replace(/[^\d.-]/g, "");
+/**
+ * Células numéricas do Excel chegam como `number` do JS (ex: -0.55), já com
+ * o valor correto — convertê-las para string e reaplicar a lógica de
+ * vírgula/ponto do formato brasileiro trocaria "-0.55" por "-055" (o ponto
+ * decimal seria removido como se fosse separador de milhar), inflando o
+ * valor 100x. Só texto (CSV, ou célula Excel formatada como texto) passa
+ * pela conversão de formato PT-BR.
+ */
+function parseAmount(raw: unknown): number {
+  if (typeof raw === "number") {
+    return raw;
+  }
+  const cleaned = String(raw ?? "")
+    .trim()
+    .replace(/\./g, "")
+    .replace(",", ".")
+    .replace(/[^\d.-]/g, "");
   return parseFloat(cleaned);
 }
 
@@ -67,7 +82,7 @@ export function parseCsvStatement(
   for (const row of rows) {
     const dateRaw = String(row[dateCol] ?? "");
     const date = parseBRDate(dateRaw);
-    const amountRaw = parseAmount(String(row[amountCol] ?? ""));
+    const amountRaw = parseAmount(row[amountCol]);
     if (!date || isNaN(amountRaw) || amountRaw === 0) continue;
 
     parsed.push({

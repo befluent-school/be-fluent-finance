@@ -104,3 +104,16 @@ export async function markInvoicePaid(
   revalidatePath("/alunos");
   return undefined;
 }
+
+export async function deleteInvoice(invoiceId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("invoices").delete().eq("id", invoiceId);
+
+  if (error) {
+    return { error: "Erro ao excluir mensalidade." };
+  }
+
+  revalidatePath("/mensalidades");
+  revalidatePath("/alunos");
+  return { success: true };
+}
