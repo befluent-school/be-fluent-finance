@@ -8,10 +8,16 @@ import {
   parseOfxStatement,
   type ParsedStatementRow,
 } from "@/lib/bank-statement-parser";
-import { confirmBankImport, suggestCategoriesForImport } from "@/app/actions/bank-import";
+import {
+  confirmBankImport,
+  suggestCategoriesForImport,
+  findTransferMatches,
+} from "@/app/actions/bank-import";
 
 const inputClass =
   "mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500";
+
+const TRANSFER_CATEGORY_NAME = "Transferência entre Contas";
 
 type Category = { id: string; name: string };
 
@@ -28,6 +34,7 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
   const [amountCol, setAmountCol] = useState("");
   const [rows, setRows] = useState<ParsedStatementRow[]>([]);
   const [rowCategories, setRowCategories] = useState<(string | null)[]>([]);
+  const [transferMatched, setTransferMatched] = useState<boolean[]>([]);
   const [isPending, startTransition] = useTransition();
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -48,6 +55,7 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
     setAmountCol("");
     setRows([]);
     setRowCategories([]);
+    setTransferMatched([]);
     setParseError(null);
     setImportResult(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -63,14 +71,30 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
     setRowCategories(parsedRows.map(() => null));
     setStep("preview");
 
+    const hasTransferCategory = categories.some((c) => c.name === TRANSFER_CATEGORY_NAME);
+
+    // Auto-match de transferências entre contas (data + valor) roda primeiro
+    // e tem prioridade: uma linha identificada como par de transferência não
+    // deve ser sobrescrita pela sugestão de categoria da IA depois.
+    const transferMatchPromise = hasTransferCategory
+      ? findTransferMatches(parsedRows.map((r) => ({ date: r.date, amount: r.amount, type: r.type })))
+      : Promise.resolve(parsedRows.map(() => false));
+
     if (categories.length === 0) return;
     setIsSuggesting(true);
-    suggestCategoriesForImport(
-      parsedRows.map((r) => r.description),
-      categories.map((c) => c.name)
-    )
-      .then((results) => {
-        setRowCategories(results.map((r) => r.suggestedCategory));
+
+    Promise.all([
+      transferMatchPromise,
+      suggestCategoriesForImport(
+        parsedRows.map((r) => r.description),
+        categories.map((c) => c.name)
+      ),
+    ])
+      .then(([transferMatches, suggestions]) => {
+        setTransferMatched(transferMatches);
+        setRowCategories(
+          suggestions.map((s, i) => (transferMatches[i] ? TRANSFER_CATEGORY_NAME : s.suggestedCategory))
+        );
       })
       .finally(() => setIsSuggesting(false));
   }
@@ -335,6 +359,15 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
                 transação(ões) · revise as categorias antes de confirmar
                 {isSuggesting && " · sugerindo categorias com IA..."}
               </p>
+              {transferMatched.some(Boolean) && (
+                <p className="text-xs text-amber-400">
+                  {transferMatched.filter(Boolean).length} transação(ões) identificada(s)
+                  automaticamente como transferência entre suas próprias contas (mesma data e
+                  valor de um lançamento já existente) — marcadas como &quot;Transferência entre
+                  Contas&quot; para não contar como receita/despesa duplicada. Revise se algum
+                  match estiver errado.
+                </p>
+              )}
 
               <div className="max-h-96 overflow-y-auto card-premium rounded-md">
                 <table className="w-full text-left text-sm">
@@ -348,11 +381,23 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
                   </thead>
                   <tbody>
                     {rows.map((row, i) => (
-                      <tr key={i} className="border-b border-ink-700/70 last:border-0">
+                      <tr
+                        key={i}
+                        className={`border-b border-ink-700/70 last:border-0 ${
+                          transferMatched[i] ? "bg-amber-500/[0.06]" : ""
+                        }`}
+                      >
                         <td className="px-3 py-2 text-ink-100">
                           {new Date(row.date + "T00:00:00").toLocaleDateString("pt-BR")}
                         </td>
-                        <td className="px-3 py-2 text-ink-300">{row.description}</td>
+                        <td className="px-3 py-2 text-ink-300">
+                          {row.description}
+                          {transferMatched[i] && (
+                            <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-400">
+                              transferência
+                            </span>
+                          )}
+                        </td>
                         <td
                           className={`px-3 py-2 font-medium ${
                             row.type === "CREDIT" ? "text-status-paid" : "text-status-overdue"

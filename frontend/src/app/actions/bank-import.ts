@@ -6,6 +6,48 @@ import { createAnthropicClient, isAnthropicConfigured } from "@/lib/anthropic";
 
 export type CategorySuggestion = { description: string; suggestedCategory: string | null };
 
+export type TransferCandidateRow = { date: string; amount: number; type: "CREDIT" | "DEBIT" };
+
+/**
+ * Repasses entre as próprias contas da Be Fluent (ex: Asaas -> Inter) aparecem
+ * em AMBOS os extratos: uma saída na conta de origem, uma entrada na conta de
+ * destino, mesma data, mesmo valor absoluto. Em vez de depender da IA acertar
+ * isso via prompt (ela não tem como saber quais são "as próprias contas" do
+ * usuário), fazemos o match determinístico: para cada linha do extrato sendo
+ * importado, procuramos em cash_transactions já lançadas um par de tipo
+ * oposto, mesma data e mesmo valor absoluto. Retorna o índice das linhas que
+ * batem, para o preview já vir pré-marcado como transferência.
+ */
+export async function findTransferMatches(rows: TransferCandidateRow[]): Promise<boolean[]> {
+  if (rows.length === 0) return [];
+
+  const supabase = await createClient();
+  const dates = Array.from(new Set(rows.map((r) => r.date)));
+
+  const { data: existing } = await supabase
+    .from("cash_transactions")
+    .select("date, amount, type")
+    .in("date", dates)
+    .returns<{ date: string; amount: number; type: "entrada" | "saida" }[]>();
+
+  if (!existing || existing.length === 0) return rows.map(() => false);
+
+  // Pool consumível: cada lançamento existente só casa com uma linha do
+  // extrato, para não marcar todas as transações de um valor comum (ex: duas
+  // mensalidades de mesmo valor no mesmo dia) como transferência de uma vez.
+  const pool = [...existing];
+
+  return rows.map((row) => {
+    const oppositeType = row.type === "CREDIT" ? "saida" : "entrada";
+    const idx = pool.findIndex(
+      (e) => e.date === row.date && e.type === oppositeType && Math.abs(e.amount - row.amount) < 0.01
+    );
+    if (idx === -1) return false;
+    pool.splice(idx, 1);
+    return true;
+  });
+}
+
 /**
  * Sugere a categoria mais provável para cada linha do extrato, com base na
  * descrição — só preenche um valor sugerido e editável no preview, nunca é
