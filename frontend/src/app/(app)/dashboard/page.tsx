@@ -18,7 +18,17 @@ type PlanTicket = {
 // real — mesmo critério já usado no Fluxo de Caixa para não inflar totais.
 const TRANSFER_CATEGORY_NAME = "Transferência entre Contas";
 
-export default async function DashboardPage() {
+function addMonths(referenceMonth: string, delta: number): string {
+  const [year, month] = referenceMonth.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1 + delta, 1)).toISOString().slice(0, 7);
+}
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ mes?: string }>;
+}) {
+  const { mes } = await searchParams;
   const supabase = await createClient();
 
   const {
@@ -33,7 +43,13 @@ export default async function DashboardPage() {
 
   const canViewNetProfit = profile?.role === "owner";
 
-  const referenceMonth = new Date().toISOString().slice(0, 7) + "-01";
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const selectedMonth = mes ?? currentMonth;
+  const isCurrentMonth = selectedMonth === currentMonth;
+  const referenceMonth = `${selectedMonth}-01`;
+  const previousMonthValue = addMonths(selectedMonth, -1);
+  const nextMonthValue = addMonths(selectedMonth, 1);
+
   const taskAlertThreshold = new Date();
   taskAlertThreshold.setDate(taskAlertThreshold.getDate() + 3);
   const taskAlertThresholdStr = taskAlertThreshold.toISOString().slice(0, 10);
@@ -87,26 +103,29 @@ export default async function DashboardPage() {
       .eq("completed", false)
       .lte("due_date", taskAlertThresholdStr)
       .order("due_date"),
-    // Caixa disponível: entradas já confirmadas em extrato bancário este mês.
+    // Caixa disponível: entradas já confirmadas em extrato bancário no mês selecionado.
     supabase
       .from("cash_transactions")
       .select("amount, type, cost_categories(name)")
       .gte("date", referenceMonth)
+      .lt("date", `${nextMonthValue}-01`)
       .returns<{ amount: number; type: "entrada" | "saida"; cost_categories: { name: string } | null }[]>(),
-    // Saldo total: todo o histórico de cash_transactions, sem filtro de mês.
+    // Saldo total: todo o histórico de cash_transactions, sem filtro de mês
+    // — sempre reflete o momento atual, não o mês selecionado.
     supabase
       .from("cash_transactions")
       .select("amount, type")
       .returns<{ amount: number; type: "entrada" | "saida" }[]>(),
-    // A receber: mensalidades pagas com cartão este mês — o dinheiro só
-    // conta como "caixa disponível" quando confirmado num extrato
-    // importado (categoria "Mensalidade de Aluno"), não estimamos prazo.
+    // A receber: mensalidades pagas com cartão no mês selecionado — o
+    // dinheiro só conta como "caixa disponível" quando confirmado num
+    // extrato importado (categoria "Mensalidade de Aluno"), não estimamos prazo.
     supabase
       .from("invoices")
       .select("total_paid, paid_date")
       .eq("payment_method", "cartao")
       .not("paid_date", "is", null)
-      .gte("paid_date", referenceMonth),
+      .gte("paid_date", referenceMonth)
+      .lt("paid_date", `${nextMonthValue}-01`),
   ]);
 
   const mrr = mrrData?.mrr ?? 0;
@@ -159,7 +178,42 @@ export default async function DashboardPage() {
 
   return (
     <div>
-      <p className="text-sm text-ink-300">Visão executiva em tempo real.</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-ink-300">Visão executiva em tempo real.</p>
+        <div className="flex items-center gap-3">
+          <Link
+            href={`/dashboard?mes=${previousMonthValue}`}
+            className="rounded-md px-2 py-1 text-sm text-ink-300 hover:bg-white/[0.05] hover:text-ink-50"
+          >
+            ‹
+          </Link>
+          <p className="text-sm capitalize text-ink-300">
+            {new Date(`${selectedMonth}-01`).toLocaleDateString("pt-BR", {
+              month: "long",
+              year: "numeric",
+            })}
+          </p>
+          <Link
+            href={`/dashboard?mes=${nextMonthValue}`}
+            className="rounded-md px-2 py-1 text-sm text-ink-300 hover:bg-white/[0.05] hover:text-ink-50"
+          >
+            ›
+          </Link>
+          {!isCurrentMonth && (
+            <Link href="/dashboard" className="text-xs text-amber-400 hover:text-amber-300">
+              Voltar ao mês atual
+            </Link>
+          )}
+        </div>
+      </div>
+
+      {!isCurrentMonth && (
+        <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-xs text-ink-300">
+          Mostrando dados de {new Date(`${selectedMonth}-01`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}.
+          Os valores que são &quot;foto de agora&quot; (Saldo total em caixa) sempre refletem o
+          momento atual, não o mês selecionado — só os indicadores &quot;do mês&quot; mudam.
+        </div>
+      )}
 
       <h2 className="mt-6 text-lg font-semibold text-ink-50">Caixa</h2>
       <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">

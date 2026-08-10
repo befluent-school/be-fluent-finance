@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import * as z from "zod";
 import { createClient } from "@/lib/supabase/server";
 
@@ -167,4 +168,17 @@ export async function updateStudent(
   revalidatePath("/alunos");
   revalidatePath(`/alunos/${studentId}`);
   return { success: true };
+}
+
+export async function deleteStudent(studentId: string): Promise<{ error?: string }> {
+  const supabase = await createClient();
+
+  const { error } = await supabase.from("students").delete().eq("id", studentId);
+
+  if (error) {
+    return { error: "Erro ao excluir aluno. Tente novamente." };
+  }
+
+  revalidatePath("/alunos");
+  redirect("/alunos");
 }

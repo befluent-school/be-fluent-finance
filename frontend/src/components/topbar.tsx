@@ -6,6 +6,7 @@ export const ROUTE_TITLES: Record<string, string> = {
   "/alunos": "Alunos",
   "/mensalidades": "Mensalidades",
   "/fluxo-de-caixa": "Fluxo de Caixa",
+  "/relatorio-anual": "Relatório Anual",
   "/banco/conciliacao": "Conciliação Bancária",
   "/crm": "CRM",
   "/planos": "Planos",

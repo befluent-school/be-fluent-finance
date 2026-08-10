@@ -79,6 +79,11 @@ export default async function MensalidadesPage({
         <GenerateInvoicesButton referenceMonth={referenceMonth} />
       </div>
 
+      <div className="mt-4 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-xs text-ink-300">
+        Marcar como pago aqui não lança automaticamente no Fluxo de Caixa. O valor só aparece lá
+        quando o extrato bancário correspondente for importado em Conciliação Bancária.
+      </div>
+
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-md border border-ink-700 bg-status-paid-bg p-4">
           <p className="text-sm text-status-paid">Pago</p>

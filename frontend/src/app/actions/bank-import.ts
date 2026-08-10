@@ -155,6 +155,6 @@ export async function confirmBankImport(
 
   revalidatePath("/fluxo-de-caixa");
   revalidatePath("/dashboard");
-  revalidatePath("/banco/extrato");
+  revalidatePath("/banco/conciliacao");
   return { success: true, imported, skipped: rows.length - imported };
 }

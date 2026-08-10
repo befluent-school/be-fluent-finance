@@ -4,6 +4,8 @@ import { formatCurrencyBRL } from "@shared/finance";
 import { NewTransactionForm } from "./new-transaction-form";
 import { MonthlyEvolutionChart } from "./monthly-evolution-chart";
 import { PeriodSelector } from "./period-selector";
+import { EvolutionRangeSelector } from "./evolution-range-selector";
+import { variation, VariationBadge } from "@/components/ui/variation-badge";
 
 type TransactionRow = {
   id: string;
@@ -30,13 +32,6 @@ const SOURCE_LABEL: Record<string, string> = {
 // visíveis na tabela de lançamentos para rastreabilidade.
 const TRANSFER_CATEGORY_NAME = "Transferência entre Contas";
 
-function monthsAgo(n: number): string {
-  const d = new Date();
-  d.setUTCDate(1);
-  d.setUTCMonth(d.getUTCMonth() - n);
-  return d.toISOString().slice(0, 7);
-}
-
 function addMonths(referenceMonth: string, delta: number): string {
   const [year, month] = referenceMonth.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1 + delta, 1)).toISOString().slice(0, 7);
@@ -48,29 +43,27 @@ function addDays(dateStr: string, delta: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function variation(current: number, previous: number): number | null {
-  if (previous === 0) return null;
-  return ((current - previous) / previous) * 100;
-}
-
-function VariationBadge({ value }: { value: number | null }) {
-  if (value === null) return null;
-  const positive = value >= 0;
-  return (
-    <span
-      className={`ml-2 text-xs font-medium ${positive ? "text-status-paid" : "text-status-overdue"}`}
-    >
-      {positive ? "▲" : "▼"} {Math.abs(value).toFixed(0)}% vs. período anterior
-    </span>
+// Meses (YYYY-MM) exibidos no gráfico de evolução, do mais antigo ao mais
+// recente. "6m"/"12m" são janelas corridas terminando no mês de referência;
+// "ano" é o ano civil (janeiro a dezembro) do ano do mês de referência.
+function evolutionMonths(referenceMonth: string, mode: string): string[] {
+  if (mode === "ano") {
+    const year = referenceMonth.slice(0, 4);
+    return Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
+  }
+  const count = mode === "12m" ? 12 : 6;
+  const [year, month] = referenceMonth.split("-").map(Number);
+  return Array.from({ length: count }, (_, i) =>
+    addMonths(`${year}-${String(month).padStart(2, "0")}`, -(count - 1 - i))
   );
 }
 
 export default async function FluxoDeCaixaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ mes?: string; de?: string; ate?: string }>;
+  searchParams: Promise<{ mes?: string; de?: string; ate?: string; evolucao?: string }>;
 }) {
-  const { mes, de, ate } = await searchParams;
+  const { mes, de, ate, evolucao } = await searchParams;
 
   // Período customizado (de/ate) tem prioridade sobre a navegação por mês.
   const usingCustomPeriod = Boolean(de && ate);
@@ -96,6 +89,10 @@ export default async function FluxoDeCaixaPage({
 
   const supabase = await createClient();
 
+  const evolutionMode = evolucao === "12m" || evolucao === "ano" ? evolucao : "6m";
+  const evolutionMonthsList = evolutionMonths(referenceMonth, evolutionMode);
+  const evolutionStart = `${evolutionMonthsList[0]}-01`;
+
   const [
     { data: periodTransactions },
     { data: categories },
@@ -115,8 +112,9 @@ export default async function FluxoDeCaixaPage({
     supabase.from("cost_categories").select("id, name, type").eq("active", true).order("name"),
     supabase
       .from("cash_transactions")
-      .select("date, amount, type")
-      .gte("date", `${monthsAgo(5)}-01`),
+      .select("date, amount, type, cost_categories(name)")
+      .gte("date", evolutionStart)
+      .returns<{ date: string; amount: number; type: "entrada" | "saida"; cost_categories: { name: string } | null }[]>(),
     supabase
       .from("cash_transactions")
       .select("amount, type, cost_categories(name)")
@@ -153,11 +151,15 @@ export default async function FluxoDeCaixaPage({
   const currentBalance = periodTransactions?.[0]?.running_balance ?? 0;
   const previousBalance = currentBalance - totals.entrada + totals.saida;
 
-  const monthlyTotals = Array.from({ length: 6 }, (_, i) => monthsAgo(5 - i)).map((month) => {
-    const entrada = (yearTransactions ?? [])
+  const nonTransferYearTransactions = (yearTransactions ?? []).filter(
+    (t) => t.cost_categories?.name !== TRANSFER_CATEGORY_NAME
+  );
+
+  const monthlyTotals = evolutionMonthsList.map((month) => {
+    const entrada = nonTransferYearTransactions
       .filter((t) => t.date.startsWith(month) && t.type === "entrada")
       .reduce((sum, t) => sum + t.amount, 0);
-    const saida = (yearTransactions ?? [])
+    const saida = nonTransferYearTransactions
       .filter((t) => t.date.startsWith(month) && t.type === "saida")
       .reduce((sum, t) => sum + t.amount, 0);
     return { month, entrada, saida };
@@ -202,6 +204,12 @@ export default async function FluxoDeCaixaPage({
         <NewTransactionForm categories={categories ?? []} />
       </div>
 
+      <div className="mt-4 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-xs text-ink-300">
+        Este saldo reflete só o que já foi confirmado em extrato bancário importado. Mensalidades
+        marcadas como pagas em Mensalidades só aparecem aqui depois de importadas em Conciliação
+        Bancária.
+      </div>
+
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-md border border-ink-700 bg-status-paid-bg p-4">
           <p className="text-sm text-status-paid">Entradas no período</p>
@@ -226,7 +234,18 @@ export default async function FluxoDeCaixaPage({
         </div>
       </div>
 
-      <h2 className="mt-8 text-lg font-semibold text-ink-50">Evolução (últimos 6 meses)</h2>
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-lg font-semibold text-ink-50">
+          Evolução (
+          {evolutionMode === "ano"
+            ? `ano civil ${referenceMonth.slice(0, 4)}`
+            : evolutionMode === "12m"
+              ? "últimos 12 meses"
+              : "últimos 6 meses"}
+          )
+        </h2>
+        <EvolutionRangeSelector />
+      </div>
       <div className="mt-3">
         <MonthlyEvolutionChart data={monthlyTotals} />
       </div>

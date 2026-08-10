@@ -13,6 +13,7 @@ import {
   Package,
   Target,
   CalendarCheck,
+  CalendarRange,
   type LucideIcon,
 } from "lucide-react";
 import { logout } from "@/app/actions/auth";
@@ -23,6 +24,7 @@ const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/alunos", label: "Alunos", icon: Users },
   { href: "/mensalidades", label: "Mensalidades", icon: Receipt },
   { href: "/fluxo-de-caixa", label: "Fluxo de Caixa", icon: Wallet },
+  { href: "/relatorio-anual", label: "Relatório Anual", icon: CalendarRange },
   { href: "/banco/conciliacao", label: "Conciliação Bancária", icon: Landmark },
   { href: "/crm", label: "CRM", icon: Contact },
   { href: "/planos", label: "Planos", icon: Package },

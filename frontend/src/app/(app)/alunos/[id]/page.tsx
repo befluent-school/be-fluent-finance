@@ -4,6 +4,7 @@ import { formatCurrencyBRL } from "@shared/finance";
 import type { Plan, Teacher } from "@shared/types";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EditStudentDialog } from "./edit-student-dialog";
+import { DeleteStudentButton } from "./delete-student-button";
 
 type InvoiceRow = {
   id: string;
@@ -73,22 +74,25 @@ export default async function StudentDetailPage({
     <div>
       <div className="flex items-center justify-between">
         <h1 className="font-display text-2xl font-bold text-ink-50">{student.full_name}</h1>
-        <EditStudentDialog
-          student={student}
-          enrollment={
-            enrollment
-              ? {
-                  id: enrollment.id,
-                  monthly_value: enrollment.monthly_value,
-                  due_day: enrollment.due_day,
-                  plan_id: enrollment.plan_id,
-                  teacher_id: enrollment.teacher_id,
-                }
-              : null
-          }
-          plans={plans ?? []}
-          teachers={teachers ?? []}
-        />
+        <div className="flex items-center gap-2">
+          <EditStudentDialog
+            student={student}
+            enrollment={
+              enrollment
+                ? {
+                    id: enrollment.id,
+                    monthly_value: enrollment.monthly_value,
+                    due_day: enrollment.due_day,
+                    plan_id: enrollment.plan_id,
+                    teacher_id: enrollment.teacher_id,
+                  }
+                : null
+            }
+            plans={plans ?? []}
+            teachers={teachers ?? []}
+          />
+          <DeleteStudentButton studentId={student.id} studentName={student.full_name} />
+        </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-ink-300">
         {student.payer_name && <span>Responsável: {student.payer_name}</span>}
