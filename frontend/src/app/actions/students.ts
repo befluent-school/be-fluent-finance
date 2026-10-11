@@ -3,17 +3,28 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import * as z from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { and, eq } from "drizzle-orm";
+import { withUser } from "@/lib/db";
+import { enrollments, students } from "@/lib/db/schema";
+import { logDbError } from "@/lib/db/errors";
+import { FORBIDDEN_MESSAGE, getActionUser } from "@/lib/auth/session";
+import { Policies } from "@/lib/auth/policies";
+
+const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
+
+const StudentFields = {
+  fullName: z.string().trim().min(2, { error: "Informe o nome do aluno." }).max(150),
+  payerName: optionalText(150),
+  cpf: optionalText(20),
+  phone: optionalText(30),
+  email: z.union([z.email().max(254), z.literal("")]).nullable().optional(),
+};
 
 const EnrollStudentSchema = z.object({
-  fullName: z.string().min(2, { error: "Informe o nome do aluno." }),
-  payerName: z.string().nullable().optional(),
-  cpf: z.string().nullable().optional(),
-  phone: z.string().nullable().optional(),
-  email: z.union([z.email(), z.literal("")]).nullable().optional(),
+  ...StudentFields,
   planId: z.uuid({ error: "Selecione um plano." }),
   teacherId: z.union([z.uuid(), z.literal("")]).nullable().optional(),
-  monthlyValue: z.coerce.number().min(0, { error: "Valor inválido." }),
+  monthlyValue: z.coerce.number().min(0, { error: "Valor inválido." }).max(99_999_999),
   dueDay: z.coerce.number().int().min(1).max(28, { error: "Dia de vencimento inválido (1-28)." }),
 });
 
@@ -25,6 +36,9 @@ export async function enrollStudent(
   _state: EnrollStudentState,
   formData: FormData
 ): Promise<EnrollStudentState> {
+  const user = await getActionUser(Policies.manageInvoices);
+  if (!user) return { message: FORBIDDEN_MESSAGE };
+
   const validated = EnrollStudentSchema.safeParse({
     fullName: formData.get("fullName"),
     payerName: formData.get("payerName"),
@@ -44,34 +58,32 @@ export async function enrollStudent(
   const { fullName, payerName, cpf, phone, email, planId, teacherId, monthlyValue, dueDay } =
     validated.data;
 
-  const supabase = await createClient();
+  try {
+    // Aluno + matrícula na mesma transação: ou entram os dois, ou nenhum
+    // (antes um erro na matrícula deixava o aluno cadastrado sem plano).
+    await withUser(user.id, async (tx) => {
+      const [student] = await tx
+        .insert(students)
+        .values({
+          fullName,
+          payerName: payerName || null,
+          cpf: cpf || null,
+          phone: phone || null,
+          email: email || null,
+        })
+        .returning({ id: students.id });
 
-  const { data: student, error: studentError } = await supabase
-    .from("students")
-    .insert({
-      full_name: fullName,
-      payer_name: payerName || null,
-      cpf: cpf || null,
-      phone: phone || null,
-      email: email || null,
-    })
-    .select("id")
-    .single();
-
-  if (studentError || !student) {
+      await tx.insert(enrollments).values({
+        studentId: student.id,
+        planId,
+        teacherId: teacherId || null,
+        monthlyValue,
+        dueDay,
+      });
+    });
+  } catch (err) {
+    logDbError("enrollStudent", err);
     return { message: "Erro ao cadastrar aluno. Verifique os dados e tente novamente." };
-  }
-
-  const { error: enrollmentError } = await supabase.from("enrollments").insert({
-    student_id: student.id,
-    plan_id: planId,
-    teacher_id: teacherId || null,
-    monthly_value: monthlyValue,
-    due_day: dueDay,
-  });
-
-  if (enrollmentError) {
-    return { message: "Aluno cadastrado, mas houve erro ao criar a matrícula." };
   }
 
   revalidatePath("/alunos");
@@ -80,15 +92,11 @@ export async function enrollStudent(
 
 const UpdateStudentSchema = z.object({
   studentId: z.uuid(),
-  fullName: z.string().min(2, { error: "Informe o nome do aluno." }),
-  payerName: z.string().nullable().optional(),
-  cpf: z.string().nullable().optional(),
-  phone: z.string().nullable().optional(),
-  email: z.union([z.email(), z.literal("")]).nullable().optional(),
+  ...StudentFields,
   enrollmentId: z.union([z.uuid(), z.literal("")]).nullable().optional(),
   planId: z.union([z.uuid(), z.literal("")]).nullable().optional(),
   teacherId: z.union([z.uuid(), z.literal("")]).nullable().optional(),
-  monthlyValue: z.coerce.number().min(0).nullable().optional(),
+  monthlyValue: z.coerce.number().min(0).max(99_999_999).nullable().optional(),
   dueDay: z.coerce.number().int().min(1).max(28).nullable().optional(),
 });
 
@@ -100,6 +108,9 @@ export async function updateStudent(
   _state: UpdateStudentState,
   formData: FormData
 ): Promise<UpdateStudentState> {
+  const user = await getActionUser(Policies.manageInvoices);
+  if (!user) return { message: FORBIDDEN_MESSAGE };
+
   const validated = UpdateStudentSchema.safeParse({
     studentId: formData.get("studentId"),
     fullName: formData.get("fullName"),
@@ -132,37 +143,39 @@ export async function updateStudent(
     dueDay,
   } = validated.data;
 
-  const supabase = await createClient();
+  try {
+    const result = await withUser(user.id, async (tx) => {
+      const updated = await tx
+        .update(students)
+        .set({
+          fullName,
+          payerName: payerName || null,
+          cpf: cpf || null,
+          phone: phone || null,
+          email: email || null,
+        })
+        .where(eq(students.id, studentId))
+        .returning({ id: students.id });
+      if (updated.length === 0) return "not_found" as const;
 
-  const { error: studentError } = await supabase
-    .from("students")
-    .update({
-      full_name: fullName,
-      payer_name: payerName || null,
-      cpf: cpf || null,
-      phone: phone || null,
-      email: email || null,
-    })
-    .eq("id", studentId);
-
-  if (studentError) {
+      if (enrollmentId) {
+        // A matrícula precisa ser deste aluno (antes bastava saber o id de qualquer matrícula).
+        await tx
+          .update(enrollments)
+          .set({
+            ...(planId ? { planId } : {}),
+            teacherId: teacherId || null,
+            ...(monthlyValue != null ? { monthlyValue } : {}),
+            ...(dueDay != null ? { dueDay } : {}),
+          })
+          .where(and(eq(enrollments.id, enrollmentId), eq(enrollments.studentId, studentId)));
+      }
+      return "ok" as const;
+    });
+    if (result === "not_found") return { message: "Aluno não encontrado." };
+  } catch (err) {
+    logDbError("updateStudent", err);
     return { message: "Erro ao atualizar aluno." };
-  }
-
-  if (enrollmentId) {
-    const { error: enrollmentError } = await supabase
-      .from("enrollments")
-      .update({
-        plan_id: planId || undefined,
-        teacher_id: teacherId || null,
-        monthly_value: monthlyValue ?? undefined,
-        due_day: dueDay ?? undefined,
-      })
-      .eq("id", enrollmentId);
-
-    if (enrollmentError) {
-      return { message: "Aluno atualizado, mas houve erro ao atualizar a matrícula." };
-    }
   }
 
   revalidatePath("/alunos");
@@ -171,11 +184,17 @@ export async function updateStudent(
 }
 
 export async function deleteStudent(studentId: string): Promise<{ error?: string }> {
-  const supabase = await createClient();
+  const user = await getActionUser(Policies.manageInvoices);
+  if (!user) return { error: FORBIDDEN_MESSAGE };
+  if (!z.uuid().safeParse(studentId).success) return { error: "Aluno inválido." };
 
-  const { error } = await supabase.from("students").delete().eq("id", studentId);
-
-  if (error) {
+  try {
+    const deleted = await withUser(user.id, (tx) =>
+      tx.delete(students).where(eq(students.id, studentId)).returning({ id: students.id })
+    );
+    if (deleted.length === 0) return { error: "Aluno não encontrado." };
+  } catch (err) {
+    logDbError("deleteStudent", err);
     return { error: "Erro ao excluir aluno. Tente novamente." };
   }
 

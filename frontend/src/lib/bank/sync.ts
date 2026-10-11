@@ -1,0 +1,189 @@
+import "server-only";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import type { Tx } from "@/lib/db";
+import { bankProviders, cashTransactions, costCategories } from "@/lib/db/schema";
+import { decryptCredentials } from "./credentials";
+import { asaasConnector } from "./asaas";
+import { interConnector } from "./inter";
+import type { BankConnector, NormalizedTxn } from "./types";
+
+/**
+ * Motor de sincronização bancária. Dado um provider configurado, busca as
+ * transações na API do banco e as lança no fluxo de caixa com o MESMO dedupe
+ * da importação manual — reusar é o que garante "sem duplicata" mesmo que a
+ * mesma transação apareça também num extrato importado à mão.
+ */
+
+const CONNECTORS: Record<string, BankConnector> = {
+  asaas: asaasConnector,
+  inter: interConnector,
+};
+
+export type SyncOutcome = {
+  providerId: string;
+  label: string;
+  ok: boolean;
+  imported: number;
+  skipped: number;
+  through: string | null;
+  error?: string;
+};
+
+const TRANSFER_CATEGORY = "Transferência entre Contas";
+
+function dedupeKeyFor(t: NormalizedTxn, label: string): string {
+  // Com id do banco: chave estável e única por transação.
+  if (t.externalId) return t.externalId;
+  // Sem id: mesma regra da importação manual (inclui o rótulo da conta para
+  // não confundir a mesma data/valor em bancos diferentes).
+  return `${t.date}|${t.description.trim().toLowerCase()}|${t.amount}|${t.type}|${label}`;
+}
+
+/**
+ * Sincroniza UM provider. Recebe a transação ativa do banco (tx) já com RLS do
+ * usuário. Retorna o resultado; nunca lança (erros viram status 'erro').
+ */
+export async function syncProvider(tx: Tx, providerId: string, today: string): Promise<SyncOutcome> {
+  const [p] = await tx.select().from(bankProviders).where(eq(bankProviders.id, providerId));
+  if (!p) return { providerId, label: "?", ok: false, imported: 0, skipped: 0, through: null, error: "Provider não encontrado." };
+
+  const base: Omit<SyncOutcome, "ok" | "imported" | "skipped" | "through" | "error"> = {
+    providerId: p.id,
+    label: p.label,
+  };
+
+  const connector = CONNECTORS[p.provider];
+  if (!connector) {
+    await markProvider(tx, p.id, "erro", "Conector não implementado para este provedor.", 0);
+    return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: "Conector não implementado." };
+  }
+  if (!p.active) {
+    return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: "Conexão inativa." };
+  }
+
+  const credentials = decryptCredentials(p.credentialsEnc);
+  if (Object.keys(credentials).length === 0) {
+    await markProvider(tx, p.id, "erro", "Credenciais não configuradas ou ilegíveis.", 0);
+    return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: "Credenciais não configuradas." };
+  }
+
+  // Janela de busca: da última data trazida (ou sync_window_days atrás) até hoje.
+  const windowStart = new Date(Date.now() - p.syncWindowDays * 86400_000).toISOString().slice(0, 10);
+  const since = p.lastSyncedThrough && p.lastSyncedThrough > windowStart ? p.lastSyncedThrough : windowStart;
+
+  const result = await connector.fetchTransactions(p.config ?? {}, credentials, since, today);
+  if (!result.ok) {
+    await markProvider(tx, p.id, "erro", result.error.slice(0, 500), 0);
+    return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: result.error };
+  }
+
+  const txns = result.transactions;
+  if (txns.length === 0) {
+    await markProvider(tx, p.id, "ok", null, 0, result.through);
+    return { ...base, ok: true, imported: 0, skipped: 0, through: result.through };
+  }
+
+  // Categoria de transferência (para marcar repasses entre contas próprias).
+  const [transferCat] = await tx
+    .select({ id: costCategories.id })
+    .from(costCategories)
+    .where(eq(costCategories.name, TRANSFER_CATEGORY));
+
+  // Detecta transferências entre contas próprias: para cada transação, procura
+  // em cash_transactions já lançadas uma de tipo oposto, mesma data e valor.
+  const dates = Array.from(new Set(txns.map((t) => t.date)));
+  const existing = await tx
+    .select({ date: cashTransactions.date, amount: cashTransactions.amount, type: cashTransactions.type })
+    .from(cashTransactions)
+    .where(inArray(cashTransactions.date, dates));
+  const pool = [...existing];
+
+  const rows = txns.map((t) => {
+    let categoryId: string | null = null;
+    const oppositeType = t.type === "entrada" ? "saida" : "entrada";
+    const idx = pool.findIndex(
+      (e) => e.date === t.date && e.type === oppositeType && Math.abs(e.amount - t.amount) < 0.01
+    );
+    if (idx !== -1 && transferCat) {
+      categoryId = transferCat.id;
+      pool.splice(idx, 1);
+    }
+    return {
+      date: t.date,
+      description: `${t.description} (${p.label})`,
+      amount: t.amount,
+      type: t.type,
+      categoryId,
+      source: p.provider === "asaas" ? ("asaas" as const) : p.provider === "inter" ? ("inter" as const) : ("api_sync" as const),
+      bankProviderId: p.id,
+      dedupeKey: dedupeKeyFor(t, p.label),
+    };
+  });
+
+  const inserted = await tx
+    .insert(cashTransactions)
+    .values(rows)
+    .onConflictDoNothing({ target: cashTransactions.dedupeKey })
+    .returning({ id: cashTransactions.id });
+
+  const imported = inserted.length;
+  const skipped = rows.length - imported;
+  await markProvider(tx, p.id, "ok", null, imported, result.through);
+
+  return { ...base, ok: true, imported, skipped, through: result.through };
+}
+
+async function markProvider(
+  tx: Tx,
+  id: string,
+  status: "ok" | "erro",
+  error: string | null,
+  importedCount: number,
+  through?: string | null
+): Promise<void> {
+  await tx
+    .update(bankProviders)
+    .set({
+      lastStatus: status,
+      lastError: error,
+      lastSyncedAt: sql`now()`,
+      lastImportedCount: importedCount,
+      ...(through ? { lastSyncedThrough: through } : {}),
+    })
+    .where(eq(bankProviders.id, id));
+}
+
+/** Sincroniza TODOS os providers ativos. Usado pela virada diária / CLI. */
+export async function syncAllActiveProviders(tx: Tx, today: string): Promise<SyncOutcome[]> {
+  const active = await tx
+    .select({ id: bankProviders.id })
+    .from(bankProviders)
+    .where(and(eq(bankProviders.active, true)));
+  const outcomes: SyncOutcome[] = [];
+  for (const { id } of active) {
+    outcomes.push(await syncProvider(tx, id, today));
+  }
+  return outcomes;
+}
+
+/**
+ * Rede de segurança: sincroniza providers ativos no máximo uma vez a cada
+ * ~6 h quando alguém abre o app. Mantém o fluxo "em tempo real" sem agendador,
+ * mas o cron/Task Scheduler continua sendo o caminho principal (mais frequente).
+ * Não bloqueia a renderização e nunca lança.
+ */
+export async function ensureBankSyncRecent(tx: Tx): Promise<void> {
+  const [due] = await tx
+    .select({ id: bankProviders.id })
+    .from(bankProviders)
+    .where(
+      and(
+        eq(bankProviders.active, true),
+        sql`(${bankProviders.lastSyncedAt} is null or ${bankProviders.lastSyncedAt} < now() - interval '6 hours')`
+      )
+    )
+    .limit(1);
+  if (!due) return; // nenhum provider ativo vencido → nada a fazer
+  const today = new Date().toISOString().slice(0, 10);
+  await syncAllActiveProviders(tx, today);
+}

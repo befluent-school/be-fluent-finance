@@ -1,4 +1,8 @@
-import { createClient } from "@/lib/supabase/server";
+import { and, asc, eq, gte, lte } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser, sequential } from "@/lib/db";
+import { profiles as profilesTable, tasks as tasksTable } from "@/lib/db/schema";
+import { parseIsoDate } from "@/lib/validation";
 import { MonthCalendar } from "./month-calendar";
 import { TaskForm } from "./task-form";
 import { TaskCheckbox } from "./task-checkbox";
@@ -17,28 +21,52 @@ export default async function TarefasPage({
 }) {
   const params = await searchParams;
   const now = new Date();
-  const year = params.year ? parseInt(params.year, 10) : now.getFullYear();
-  const month = params.month ? parseInt(params.month, 10) : now.getMonth() + 1;
+  const parsedYear = params.year ? parseInt(params.year, 10) : NaN;
+  const parsedMonth = params.month ? parseInt(params.month, 10) : NaN;
+  const year = parsedYear >= 2000 && parsedYear <= 2100 ? parsedYear : now.getFullYear();
+  const month = parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : now.getMonth() + 1;
   const selectedDate =
-    params.date ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    parseIsoDate(params.date) ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
   const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
   const monthEnd = new Date(year, month, 0).toISOString().slice(0, 10);
 
-  const supabase = await createClient();
+  const user = await requireUser();
 
-  const [{ data: monthTasks }, { data: selectedTasks }, { data: profiles }] = await Promise.all([
-    supabase.from("tasks").select("due_date").gte("due_date", monthStart).lte("due_date", monthEnd),
-    supabase
-      .from("tasks")
-      .select("id, title, description, due_date, priority, assignee_id, recurrence, completed, profiles(full_name)")
-      .eq("due_date", selectedDate)
-      .order("priority"),
-    supabase.from("profiles").select("id, full_name").eq("active", true).order("full_name"),
-  ]);
+  const { monthTasks, selectedTasks, profiles } = await withUser(user.id, async (tx) => {
+    const [monthTasks, taskRows, profiles] = await sequential([
+      () => tx
+        .select({ due_date: tasksTable.dueDate })
+        .from(tasksTable)
+        .where(and(gte(tasksTable.dueDate, monthStart), lte(tasksTable.dueDate, monthEnd))),
+      () => tx.query.tasks.findMany({
+        where: eq(tasksTable.dueDate, selectedDate),
+        with: { assignee: { columns: { fullName: true } } },
+        orderBy: asc(tasksTable.priority),
+      }),
+      () => // RLS de profiles: owner vê todos; os demais veem só a si mesmos.
+      tx
+        .select({ id: profilesTable.id, full_name: profilesTable.fullName })
+        .from(profilesTable)
+        .where(eq(profilesTable.active, true))
+        .orderBy(asc(profilesTable.fullName)),
+    ]);
+    const selectedTasks = taskRows.map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      due_date: t.dueDate,
+      priority: t.priority,
+      assignee_id: t.assigneeId,
+      recurrence: t.recurrence,
+      completed: t.completed,
+      profiles: t.assignee ? { full_name: t.assignee.fullName } : null,
+    }));
+    return { monthTasks, selectedTasks, profiles };
+  });
 
   const countsByDay: Record<string, number> = {};
-  for (const t of monthTasks ?? []) {
+  for (const t of monthTasks) {
     countsByDay[t.due_date] = (countsByDay[t.due_date] ?? 0) + 1;
   }
 
@@ -87,7 +115,7 @@ export default async function TarefasPage({
                     </span>
                     {task.profiles && (
                       <span className="text-ink-500">
-                        · {(task.profiles as unknown as { full_name: string }).full_name}
+                        · {task.profiles.full_name}
                       </span>
                     )}
                     {task.recurrence !== "none" && (

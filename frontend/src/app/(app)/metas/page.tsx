@@ -1,5 +1,8 @@
-import { createClient } from "@/lib/supabase/server";
-import type { Plan } from "@shared/types";
+import { asc, eq } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser, sequential } from "@/lib/db";
+import { plans as plansTable, studentTargets } from "@/lib/db/schema";
+import { getMonthTargets } from "@/lib/queries/kpis";
 import {
   upsertRevenueTarget,
   upsertStudentTarget,
@@ -9,35 +12,30 @@ import {
 import { TargetForm } from "./target-form";
 
 export default async function MetasPage() {
-  const supabase = await createClient();
+  const user = await requireUser();
   const referenceMonth = new Date().toISOString().slice(0, 7) + "-01";
 
-  const [{ data: plans }, { data: revenueTarget }, { data: studentTargets }, { data: cacTarget }, { data: ltvCacTarget }] =
-    await Promise.all([
-      supabase.from("plans").select("*").eq("active", true).order("name").returns<Plan[]>(),
-      supabase
-        .from("revenue_targets")
-        .select("target_amount")
-        .eq("reference_month", referenceMonth)
-        .maybeSingle(),
-      supabase
-        .from("student_targets")
-        .select("plan_id, target_count")
-        .eq("reference_month", referenceMonth),
-      supabase
-        .from("cac_targets")
-        .select("max_cac")
-        .eq("reference_month", referenceMonth)
-        .maybeSingle(),
-      supabase
-        .from("ltv_cac_targets")
-        .select("min_ratio")
-        .eq("reference_month", referenceMonth)
-        .maybeSingle(),
+  const { plans, targets, studentTargetRows } = await withUser(user.id, async (tx) => {
+    const [plans, targets, studentTargetRows] = await sequential([
+      () => tx
+        .select({ id: plansTable.id, name: plansTable.name })
+        .from(plansTable)
+        .where(eq(plansTable.active, true))
+        .orderBy(asc(plansTable.name)),
+      () => getMonthTargets(tx, referenceMonth),
+      () => tx
+        .select({ plan_id: studentTargets.planId, target_count: studentTargets.targetCount })
+        .from(studentTargets)
+        .where(eq(studentTargets.referenceMonth, referenceMonth)),
     ]);
+    return { plans, targets, studentTargetRows };
+  });
+  const revenueTarget = targets.revenueTarget != null ? { target_amount: targets.revenueTarget } : null;
+  const cacTarget = targets.maxCac != null ? { max_cac: targets.maxCac } : null;
+  const ltvCacTarget = targets.minLtvCacRatio != null ? { min_ratio: targets.minLtvCacRatio } : null;
 
   const studentTargetByPlan = new Map(
-    (studentTargets ?? []).map((t) => [t.plan_id, t.target_count])
+    studentTargetRows.map((t) => [t.plan_id, t.target_count])
   );
 
   const monthLabel = new Date(referenceMonth + "T00:00:00").toLocaleDateString("pt-BR", {

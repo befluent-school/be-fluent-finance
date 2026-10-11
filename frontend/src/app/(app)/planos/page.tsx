@@ -1,15 +1,17 @@
-import { createClient } from "@/lib/supabase/server";
+import { asc } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser } from "@/lib/db";
+import { plans as plansTable } from "@/lib/db/schema";
+import { toPlan } from "@/lib/queries/mappers";
 import { calculatePlanLtv, formatCurrencyBRL } from "@shared/finance";
 import type { Plan } from "@shared/types";
 import { PlanForm } from "./plan-form";
 
 export default async function PlanosPage() {
-  const supabase = await createClient();
-  const { data: plans } = await supabase
-    .from("plans")
-    .select("*")
-    .order("monthly_value", { ascending: true })
-    .returns<Plan[]>();
+  const user = await requireUser();
+  const plans: Plan[] = await withUser(user.id, async (tx) =>
+    (await tx.select().from(plansTable).orderBy(asc(plansTable.monthlyValue))).map(toPlan)
+  );
 
   return (
     <div>

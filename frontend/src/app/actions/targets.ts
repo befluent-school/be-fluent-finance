@@ -2,150 +2,165 @@
 
 import { revalidatePath } from "next/cache";
 import * as z from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { withUser } from "@/lib/db";
+import { cacTargets, ltvCacTargets, revenueTargets, studentTargets } from "@/lib/db/schema";
+import { logDbError } from "@/lib/db/errors";
+import { FORBIDDEN_MESSAGE, getActionUser } from "@/lib/auth/session";
+import { Policies } from "@/lib/auth/policies";
+import { money, referenceMonthDate } from "@/lib/validation";
 
 export type TargetsState = { message?: string; success?: boolean } | undefined;
 
+function done(): TargetsState {
+  revalidatePath("/metas");
+  revalidatePath("/dashboard");
+  return { success: true };
+}
+
 const RevenueTargetSchema = z.object({
-  referenceMonth: z.string().min(1),
-  targetAmount: z.coerce.number().min(0, { error: "Valor inválido." }),
+  referenceMonth: referenceMonthDate,
+  targetAmount: money,
 });
 
 export async function upsertRevenueTarget(
   _state: TargetsState,
   formData: FormData
 ): Promise<TargetsState> {
+  const user = await getActionUser(Policies.ownerOrSocio);
+  if (!user) return { message: FORBIDDEN_MESSAGE };
+
   const parsed = RevenueTargetSchema.safeParse({
     referenceMonth: formData.get("referenceMonth"),
     targetAmount: formData.get("targetAmount"),
   });
-
   if (!parsed.success) {
     return { message: "Valor de meta de faturamento inválido." };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("revenue_targets")
-    .upsert(
-      { reference_month: parsed.data.referenceMonth, target_amount: parsed.data.targetAmount },
-      { onConflict: "reference_month" }
+  try {
+    await withUser(user.id, (tx) =>
+      tx
+        .insert(revenueTargets)
+        .values({ referenceMonth: parsed.data.referenceMonth, targetAmount: parsed.data.targetAmount })
+        .onConflictDoUpdate({
+          target: revenueTargets.referenceMonth,
+          set: { targetAmount: parsed.data.targetAmount },
+        })
     );
-
-  if (error) {
+  } catch (err) {
+    logDbError("upsertRevenueTarget", err);
     return { message: "Erro ao salvar meta de faturamento." };
   }
-
-  revalidatePath("/metas");
-  revalidatePath("/dashboard");
-  return { success: true };
+  return done();
 }
 
 const StudentTargetSchema = z.object({
-  referenceMonth: z.string().min(1),
+  referenceMonth: referenceMonthDate,
   planId: z.uuid(),
-  targetCount: z.coerce.number().int().min(0, { error: "Valor inválido." }),
+  targetCount: z.coerce.number().int().min(0, { error: "Valor inválido." }).max(100_000),
 });
 
 export async function upsertStudentTarget(
   _state: TargetsState,
   formData: FormData
 ): Promise<TargetsState> {
+  const user = await getActionUser(Policies.ownerOrSocio);
+  if (!user) return { message: FORBIDDEN_MESSAGE };
+
   const parsed = StudentTargetSchema.safeParse({
     referenceMonth: formData.get("referenceMonth"),
     planId: formData.get("planId"),
     targetCount: formData.get("targetCount"),
   });
-
   if (!parsed.success) {
     return { message: "Meta de alunos por plano inválida." };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.from("student_targets").upsert(
-    {
-      reference_month: parsed.data.referenceMonth,
-      plan_id: parsed.data.planId,
-      target_count: parsed.data.targetCount,
-    },
-    { onConflict: "reference_month,plan_id" }
-  );
-
-  if (error) {
+  try {
+    await withUser(user.id, (tx) =>
+      tx
+        .insert(studentTargets)
+        .values({
+          referenceMonth: parsed.data.referenceMonth,
+          planId: parsed.data.planId,
+          targetCount: parsed.data.targetCount,
+        })
+        .onConflictDoUpdate({
+          target: [studentTargets.referenceMonth, studentTargets.planId],
+          set: { targetCount: parsed.data.targetCount },
+        })
+    );
+  } catch (err) {
+    logDbError("upsertStudentTarget", err);
     return { message: "Erro ao salvar meta de alunos." };
   }
-
-  revalidatePath("/metas");
-  revalidatePath("/dashboard");
-  return { success: true };
+  return done();
 }
 
 const CacTargetSchema = z.object({
-  referenceMonth: z.string().min(1),
-  maxCac: z.coerce.number().min(0, { error: "Valor inválido." }),
+  referenceMonth: referenceMonthDate,
+  maxCac: money,
 });
 
 export async function upsertCacTarget(
   _state: TargetsState,
   formData: FormData
 ): Promise<TargetsState> {
+  const user = await getActionUser(Policies.ownerOrSocio);
+  if (!user) return { message: FORBIDDEN_MESSAGE };
+
   const parsed = CacTargetSchema.safeParse({
     referenceMonth: formData.get("referenceMonth"),
     maxCac: formData.get("maxCac"),
   });
-
   if (!parsed.success) {
     return { message: "Valor de CAC máximo inválido." };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("cac_targets")
-    .upsert(
-      { reference_month: parsed.data.referenceMonth, max_cac: parsed.data.maxCac },
-      { onConflict: "reference_month" }
+  try {
+    await withUser(user.id, (tx) =>
+      tx
+        .insert(cacTargets)
+        .values({ referenceMonth: parsed.data.referenceMonth, maxCac: parsed.data.maxCac })
+        .onConflictDoUpdate({ target: cacTargets.referenceMonth, set: { maxCac: parsed.data.maxCac } })
     );
-
-  if (error) {
+  } catch (err) {
+    logDbError("upsertCacTarget", err);
     return { message: "Erro ao salvar meta de CAC." };
   }
-
-  revalidatePath("/metas");
-  revalidatePath("/dashboard");
-  return { success: true };
+  return done();
 }
 
 const LtvCacTargetSchema = z.object({
-  referenceMonth: z.string().min(1),
-  minRatio: z.coerce.number().min(0, { error: "Valor inválido." }),
+  referenceMonth: referenceMonthDate,
+  minRatio: z.coerce.number().min(0, { error: "Valor inválido." }).max(9999),
 });
 
 export async function upsertLtvCacTarget(
   _state: TargetsState,
   formData: FormData
 ): Promise<TargetsState> {
+  const user = await getActionUser(Policies.ownerOrSocio);
+  if (!user) return { message: FORBIDDEN_MESSAGE };
+
   const parsed = LtvCacTargetSchema.safeParse({
     referenceMonth: formData.get("referenceMonth"),
     minRatio: formData.get("minRatio"),
   });
-
   if (!parsed.success) {
     return { message: "Valor de razão LTV:CAC inválido." };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("ltv_cac_targets")
-    .upsert(
-      { reference_month: parsed.data.referenceMonth, min_ratio: parsed.data.minRatio },
-      { onConflict: "reference_month" }
+  try {
+    await withUser(user.id, (tx) =>
+      tx
+        .insert(ltvCacTargets)
+        .values({ referenceMonth: parsed.data.referenceMonth, minRatio: parsed.data.minRatio })
+        .onConflictDoUpdate({ target: ltvCacTargets.referenceMonth, set: { minRatio: parsed.data.minRatio } })
     );
-
-  if (error) {
+  } catch (err) {
+    logDbError("upsertLtvCacTarget", err);
     return { message: "Erro ao salvar meta de LTV:CAC." };
   }
-
-  revalidatePath("/metas");
-  revalidatePath("/dashboard");
-  return { success: true };
+  return done();
 }

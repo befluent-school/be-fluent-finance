@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import * as z from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { eq } from "drizzle-orm";
+import { withUser } from "@/lib/db";
+import { enrollments, invoices } from "@/lib/db/schema";
+import { logDbError } from "@/lib/db/errors";
+import { FORBIDDEN_MESSAGE, getActionUser } from "@/lib/auth/session";
+import { Policies } from "@/lib/auth/policies";
+import { isoDate, yearMonth } from "@/lib/validation";
 
 /**
  * Gera as faturas do mês de referência informado para todas as matrículas
@@ -11,48 +17,49 @@ import { createClient } from "@/lib/supabase/server";
  * reference_month cobre isso).
  */
 export async function generateMonthlyInvoices(referenceMonth: string) {
-  const supabase = await createClient();
-
-  const { data: enrollments } = await supabase
-    .from("enrollments")
-    .select("id, monthly_value, due_day")
-    .eq("status", "active");
-
-  if (!enrollments || enrollments.length === 0) {
-    return { created: 0 };
-  }
+  const user = await getActionUser(Policies.manageInvoices);
+  if (!user) return { created: 0, error: FORBIDDEN_MESSAGE };
+  if (!yearMonth.safeParse(referenceMonth).success) return { created: 0, error: "Mês inválido." };
 
   const [year, month] = referenceMonth.split("-").map(Number);
 
-  const rows = enrollments.map((enrollment) => {
-    const dueDate = new Date(Date.UTC(year, month - 1, enrollment.due_day));
-    return {
-      enrollment_id: enrollment.id,
-      reference_month: `${referenceMonth}-01`,
-      amount: enrollment.monthly_value,
-      due_date: dueDate.toISOString().slice(0, 10),
-    };
-  });
+  try {
+    const created = await withUser(user.id, async (tx) => {
+      const active = await tx
+        .select({ id: enrollments.id, monthlyValue: enrollments.monthlyValue, dueDay: enrollments.dueDay })
+        .from(enrollments)
+        .where(eq(enrollments.status, "active"));
+      if (active.length === 0) return 0;
 
-  const { data, error } = await supabase
-    .from("invoices")
-    .upsert(rows, { onConflict: "enrollment_id,reference_month", ignoreDuplicates: true })
-    .select("id");
+      const rows = active.map((enrollment) => ({
+        enrollmentId: enrollment.id,
+        referenceMonth: `${referenceMonth}-01`,
+        amount: enrollment.monthlyValue,
+        dueDate: new Date(Date.UTC(year, month - 1, enrollment.dueDay)).toISOString().slice(0, 10),
+      }));
 
-  if (error) {
-    return { created: 0, error: error.message };
+      const inserted = await tx
+        .insert(invoices)
+        .values(rows)
+        .onConflictDoNothing({ target: [invoices.enrollmentId, invoices.referenceMonth] })
+        .returning({ id: invoices.id });
+      return inserted.length;
+    });
+
+    revalidatePath("/mensalidades");
+    return { created };
+  } catch (err) {
+    logDbError("generateMonthlyInvoices", err);
+    return { created: 0, error: "Erro ao gerar mensalidades." };
   }
-
-  revalidatePath("/mensalidades");
-  return { created: data?.length ?? 0 };
 }
 
 const MarkPaidSchema = z.object({
   invoiceId: z.uuid(),
-  paidDate: z.string().min(1),
+  paidDate: isoDate,
   paymentMethod: z.enum(["pix", "cartao", "boleto", "transferencia"]),
-  lateFeeAmount: z.coerce.number().min(0).default(0),
-  interestAmount: z.coerce.number().min(0).default(0),
+  lateFeeAmount: z.coerce.number().min(0).max(99_999_999).default(0),
+  interestAmount: z.coerce.number().min(0).max(99_999_999).default(0),
 });
 
 export type MarkPaidState = { error?: string } | undefined;
@@ -61,40 +68,52 @@ export async function markInvoicePaid(
   _state: MarkPaidState,
   formData: FormData
 ): Promise<MarkPaidState> {
+  const user = await getActionUser(Policies.manageInvoices);
+  if (!user) return { error: FORBIDDEN_MESSAGE };
+
   const validated = MarkPaidSchema.safeParse({
     invoiceId: formData.get("invoiceId"),
     paidDate: formData.get("paidDate"),
     paymentMethod: formData.get("paymentMethod"),
-    lateFeeAmount: formData.get("lateFeeAmount"),
-    interestAmount: formData.get("interestAmount"),
+    lateFeeAmount: formData.get("lateFeeAmount") || 0,
+    interestAmount: formData.get("interestAmount") || 0,
   });
 
   if (!validated.success) {
     return { error: "Dados inválidos." };
   }
 
-  const { lateFeeAmount, interestAmount } = validated.data;
+  const { invoiceId, paidDate, paymentMethod, lateFeeAmount, interestAmount } = validated.data;
 
-  const supabase = await createClient();
-  const { data: invoice, error } = await supabase
-    .from("invoices")
-    .update({
-      paid_date: validated.data.paidDate,
-      payment_method: validated.data.paymentMethod,
-      late_fee_amount: lateFeeAmount,
-      interest_amount: interestAmount,
-    })
-    .eq("id", validated.data.invoiceId)
-    .select("id, amount")
-    .single();
+  try {
+    const updated = await withUser(user.id, async (tx) => {
+      const [invoice] = await tx
+        .select({ amount: invoices.amount })
+        .from(invoices)
+        .where(eq(invoices.id, invoiceId));
+      if (!invoice) return 0;
 
-  if (error || !invoice) {
+      // Uma única gravação (antes eram dois updates separados): o total pago
+      // nunca fica dessincronizado da data de pagamento.
+      const total = Math.round((invoice.amount + lateFeeAmount + interestAmount) * 100) / 100;
+      const rows = await tx
+        .update(invoices)
+        .set({
+          paidDate,
+          paymentMethod,
+          lateFeeAmount,
+          interestAmount,
+          totalPaid: total,
+        })
+        .where(eq(invoices.id, invoiceId))
+        .returning({ id: invoices.id });
+      return rows.length;
+    });
+    if (updated === 0) return { error: "Mensalidade não encontrada." };
+  } catch (err) {
+    logDbError("markInvoicePaid", err);
     return { error: "Erro ao registrar pagamento." };
   }
-
-  const total = invoice.amount + lateFeeAmount + interestAmount;
-
-  await supabase.from("invoices").update({ total_paid: total }).eq("id", invoice.id);
 
   // Mensalidades não lançam mais automaticamente no fluxo de caixa — o
   // dinheiro real só entra ali quando o extrato do banco correspondente é
@@ -106,10 +125,17 @@ export async function markInvoicePaid(
 }
 
 export async function deleteInvoice(invoiceId: string) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("invoices").delete().eq("id", invoiceId);
+  const user = await getActionUser(Policies.manageInvoices);
+  if (!user) return { error: FORBIDDEN_MESSAGE };
+  if (!z.uuid().safeParse(invoiceId).success) return { error: "Mensalidade inválida." };
 
-  if (error) {
+  try {
+    const deleted = await withUser(user.id, (tx) =>
+      tx.delete(invoices).where(eq(invoices.id, invoiceId)).returning({ id: invoices.id })
+    );
+    if (deleted.length === 0) return { error: "Mensalidade não encontrada." };
+  } catch (err) {
+    logDbError("deleteInvoice", err);
     return { error: "Erro ao excluir mensalidade." };
   }
 

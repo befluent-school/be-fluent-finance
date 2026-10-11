@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { sql } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser } from "@/lib/db";
+import { parseYearMonth } from "@/lib/validation";
 import { formatCurrencyBRL } from "@shared/finance";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { GenerateInvoicesButton } from "./generate-invoices-button";
@@ -30,22 +33,53 @@ export default async function MensalidadesPage({
   searchParams: Promise<{ mes?: string }>;
 }) {
   const { mes } = await searchParams;
-  const referenceMonth = mes ?? new Date().toISOString().slice(0, 7);
+  const referenceMonth = parseYearMonth(mes, new Date().toISOString().slice(0, 7));
   const previousMonth = addMonths(referenceMonth, -1);
   const nextMonthValue = addMonths(referenceMonth, 1);
 
-  const supabase = await createClient();
-  const { data: invoices } = await supabase
-    .from("invoices_with_effective_status")
-    .select(
-      "id, amount, due_date, paid_date, payment_method, effective_status, enrollments(students(id, full_name), plans(name))"
-    )
-    .gte("reference_month", `${referenceMonth}-01`)
-    .lt("reference_month", `${nextMonthValue}-01`)
-    .order("due_date")
-    .returns<InvoiceRow[]>();
+  const user = await requireUser();
+  const invoices = await withUser(user.id, async (tx) => {
+    const { rows } = await tx.execute<{
+      id: string;
+      amount: number;
+      due_date: string;
+      paid_date: string | null;
+      payment_method: string | null;
+      effective_status: string;
+      student_id: string | null;
+      student_name: string | null;
+      plan_name: string | null;
+      has_enrollment: boolean;
+    }>(sql`
+      select i.id, i.amount, i.due_date, i.paid_date, i.payment_method, i.effective_status,
+             s.id as student_id, s.full_name as student_name, p.name as plan_name,
+             (e.id is not null) as has_enrollment
+        from public.invoices_with_effective_status i
+        left join public.enrollments e on e.id = i.enrollment_id
+        left join public.students s on s.id = e.student_id
+        left join public.plans p on p.id = e.plan_id
+       where i.reference_month >= ${`${referenceMonth}-01`}::date
+         and i.reference_month < ${`${nextMonthValue}-01`}::date
+       order by i.due_date`);
+    return rows.map(
+      (r): InvoiceRow => ({
+        id: r.id,
+        amount: Number(r.amount),
+        due_date: r.due_date,
+        paid_date: r.paid_date,
+        payment_method: r.payment_method,
+        effective_status: r.effective_status,
+        enrollments: r.has_enrollment
+          ? {
+              students: r.student_id ? { id: r.student_id, full_name: r.student_name ?? "" } : null,
+              plans: r.plan_name ? { name: r.plan_name } : null,
+            }
+          : null,
+      })
+    );
+  });
 
-  const totals = (invoices ?? []).reduce(
+  const totals = invoices.reduce(
     (acc, invoice) => {
       acc[invoice.effective_status as "pago" | "atrasado" | "pendente"] += invoice.amount;
       return acc;

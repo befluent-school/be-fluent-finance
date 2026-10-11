@@ -1,6 +1,10 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { and, asc, count, desc, eq, gte, lte, type SQL } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { Policies } from "@/lib/auth/policies";
+import { withUser, sequential } from "@/lib/db";
+import { cashTransactions, costCategories } from "@/lib/db/schema";
+import { parseIsoDate } from "@/lib/validation";
 import { formatCurrencyBRL } from "@shared/finance";
 import { ImportStatementDialog } from "./import-statement-dialog";
 import { BancoTabs } from "./banco-tabs";
@@ -26,52 +30,59 @@ export default async function ConciliacaoPage({
     pagina?: string;
   }>;
 }) {
-  const { de, ate, tipo, pagina } = await searchParams;
-  const page = Math.max(1, parseInt(pagina ?? "1", 10) || 1);
+  const params = await searchParams;
+  const de = parseIsoDate(params.de);
+  const ate = parseIsoDate(params.ate);
+  const tipo = params.tipo === "credito" || params.tipo === "debito" ? params.tipo : undefined;
+  const page = Math.min(100_000, Math.max(1, parseInt(params.pagina ?? "1", 10) || 1));
 
-  const supabase = await createClient();
+  // Dados bancários: owner e sócio (funcionário é redirecionado; o RLS
+  // de bank_statement_imports/staging também barra).
+  const user = await requireUser(Policies.ownerOrSocio);
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const filters: SQL[] = [eq(cashTransactions.source, "manual_import")];
+  if (de) filters.push(gte(cashTransactions.date, de));
+  if (ate) filters.push(lte(cashTransactions.date, ate));
+  if (tipo === "credito") filters.push(eq(cashTransactions.type, "entrada"));
+  if (tipo === "debito") filters.push(eq(cashTransactions.type, "saida"));
+  const where = and(...filters);
 
-  if (!user) {
-    redirect("/login");
-  }
+  const { categories, transactions, count: totalCount } = await withUser(user.id, async (tx) => {
+    const [categories, rows, [{ value }]] = await sequential([
+      () => tx
+        .select({ id: costCategories.id, name: costCategories.name })
+        .from(costCategories)
+        .where(eq(costCategories.active, true))
+        .orderBy(asc(costCategories.name)),
+      () => tx
+        .select({
+          id: cashTransactions.id,
+          date: cashTransactions.date,
+          description: cashTransactions.description,
+          amount: cashTransactions.amount,
+          type: cashTransactions.type,
+          categoryName: costCategories.name,
+        })
+        .from(cashTransactions)
+        .leftJoin(costCategories, eq(costCategories.id, cashTransactions.categoryId))
+        .where(where)
+        .orderBy(desc(cashTransactions.date))
+        .limit(PAGE_SIZE)
+        .offset((page - 1) * PAGE_SIZE),
+      () => tx.select({ value: count() }).from(cashTransactions).where(where),
+    ]);
+    const transactions: ExtratoRow[] = rows.map((r) => ({
+      id: r.id,
+      date: r.date,
+      description: r.description,
+      amount: r.amount,
+      type: r.type,
+      cost_categories: r.categoryName ? { name: r.categoryName } : null,
+    }));
+    return { categories, transactions, count: value };
+  });
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (profile?.role === "funcionario") {
-    redirect("/dashboard");
-  }
-
-  const { data: categories } = await supabase
-    .from("cost_categories")
-    .select("id, name")
-    .eq("active", true)
-    .order("name");
-
-  let query = supabase
-    .from("cash_transactions")
-    .select("id, date, description, amount, type, cost_categories(name)", { count: "exact" })
-    .eq("source", "manual_import")
-    .order("date", { ascending: false });
-
-  if (de) query = query.gte("date", de);
-  if (ate) query = query.lte("date", ate);
-  if (tipo === "credito") query = query.eq("type", "entrada");
-  if (tipo === "debito") query = query.eq("type", "saida");
-
-  const from = (page - 1) * PAGE_SIZE;
-  const { data: transactions, count } = await query
-    .range(from, from + PAGE_SIZE - 1)
-    .returns<ExtratoRow[]>();
-
-  const totalPages = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   function buildPageLink(targetPage: number) {
     const params = new URLSearchParams();
@@ -89,7 +100,7 @@ export default async function ConciliacaoPage({
           Importe o extrato do seu banco (CSV, Excel ou OFX) — revise as categorias e as
           transações já entram direto no fluxo de caixa.
         </p>
-        <ImportStatementDialog categories={categories ?? []} />
+        <ImportStatementDialog categories={categories} />
       </div>
 
       <div className="card-premium rounded-lg p-8 text-center text-sm text-ink-500">
@@ -174,7 +185,7 @@ export default async function ConciliacaoPage({
       {totalPages > 1 && (
         <div className="mt-4 flex items-center justify-between text-sm text-ink-300">
           <span>
-            Página {page} de {totalPages} ({count} transaç{count === 1 ? "ão" : "ões"})
+            Página {page} de {totalPages} ({totalCount} transaç{totalCount === 1 ? "ão" : "ões"})
           </span>
           <div className="flex gap-2">
             {page > 1 && (

@@ -1,7 +1,16 @@
 import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import * as z from "zod";
+import { asc, desc, eq, inArray } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser, sequential } from "@/lib/db";
+import {
+  invoices as invoicesTable,
+  plans as plansTable,
+  students as studentsTable,
+  teachers as teachersTable,
+} from "@/lib/db/schema";
+import { toPlan, toTeacher } from "@/lib/queries/mappers";
 import { formatCurrencyBRL } from "@shared/finance";
-import type { Plan, Teacher } from "@shared/types";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EditStudentDialog } from "./edit-student-dialog";
 import { DeleteStudentButton } from "./delete-student-button";
@@ -41,32 +50,69 @@ export default async function StudentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = await createClient();
+  const user = await requireUser();
+  if (!z.uuid().safeParse(id).success) notFound();
 
-  const { data: student } = await supabase
-    .from("students")
-    .select(
-      "id, full_name, payer_name, cpf, phone, email, enrollments(id, status, monthly_value, due_day, plan_id, teacher_id, plans(name), teachers(full_name))"
-    )
-    .eq("id", id)
-    .single<StudentDetail>();
+  const data = await withUser(user.id, async (tx) => {
+    const row = await tx.query.students.findFirst({
+      where: eq(studentsTable.id, id),
+      columns: { id: true, fullName: true, payerName: true, cpf: true, phone: true, email: true },
+      with: {
+        enrollments: {
+          columns: { id: true, status: true, monthlyValue: true, dueDay: true, planId: true, teacherId: true },
+          with: { plan: { columns: { name: true } }, teacher: { columns: { fullName: true } } },
+        },
+      },
+    });
+    if (!row) return null;
 
-  if (!student) {
+    const student: StudentDetail = {
+      id: row.id,
+      full_name: row.fullName,
+      payer_name: row.payerName,
+      cpf: row.cpf,
+      phone: row.phone,
+      email: row.email,
+      enrollments: row.enrollments.map((e) => ({
+        id: e.id,
+        status: e.status,
+        monthly_value: e.monthlyValue,
+        due_day: e.dueDay,
+        plan_id: e.planId,
+        teacher_id: e.teacherId,
+        plans: e.plan ? { name: e.plan.name } : null,
+        teachers: e.teacher ? { full_name: e.teacher.fullName } : null,
+      })),
+    };
+
+    const enrollmentIds = student.enrollments.map((e) => e.id);
+    const [invoiceRows, planRows, teacherRows] = await sequential([
+      () => enrollmentIds.length > 0
+        ? tx
+            .select({
+              id: invoicesTable.id,
+              reference_month: invoicesTable.referenceMonth,
+              amount: invoicesTable.amount,
+              due_date: invoicesTable.dueDate,
+              paid_date: invoicesTable.paidDate,
+              payment_method: invoicesTable.paymentMethod,
+              status: invoicesTable.status,
+            })
+            .from(invoicesTable)
+            .where(inArray(invoicesTable.enrollmentId, enrollmentIds))
+            .orderBy(desc(invoicesTable.referenceMonth))
+        : Promise.resolve([] as InvoiceRow[]),
+      () => tx.select().from(plansTable).where(eq(plansTable.active, true)).orderBy(asc(plansTable.name)),
+      () => tx.select().from(teachersTable).where(eq(teachersTable.active, true)).orderBy(asc(teachersTable.fullName)),
+    ]);
+    return { student, invoices: invoiceRows, plans: planRows.map(toPlan), teachers: teacherRows.map(toTeacher) };
+  });
+
+  if (!data) {
     notFound();
   }
 
-  const enrollmentIds = student.enrollments.map((e: { id: string }) => e.id);
-
-  const [{ data: invoices }, { data: plans }, { data: teachers }] = await Promise.all([
-    supabase
-      .from("invoices")
-      .select("id, reference_month, amount, due_date, paid_date, payment_method, status")
-      .in("enrollment_id", enrollmentIds.length > 0 ? enrollmentIds : [""])
-      .order("reference_month", { ascending: false })
-      .returns<InvoiceRow[]>(),
-    supabase.from("plans").select("*").eq("active", true).returns<Plan[]>(),
-    supabase.from("teachers").select("*").eq("active", true).returns<Teacher[]>(),
-  ]);
+  const { student, invoices, plans, teachers } = data;
 
   const enrollment = student.enrollments[0];
 
@@ -88,8 +134,8 @@ export default async function StudentDetailPage({
                   }
                 : null
             }
-            plans={plans ?? []}
-            teachers={teachers ?? []}
+            plans={plans}
+            teachers={teachers}
           />
           <DeleteStudentButton studentId={student.id} studentName={student.full_name} />
         </div>

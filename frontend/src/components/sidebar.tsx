@@ -14,28 +14,47 @@ import {
   Target,
   CalendarCheck,
   CalendarRange,
+  ArrowLeftRight,
+  Calculator,
+  RefreshCw,
   type LucideIcon,
 } from "lucide-react";
 import { logout } from "@/app/actions/auth";
 import { Logo } from "@/components/logo";
 
-const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
+type Role = "owner" | "socio" | "funcionario";
+
+// `roles` só esconde o link; o acesso é barrado de verdade na página, nas
+// Server Actions e no RLS do banco.
+const NAV_ITEMS: { href: string; label: string; icon: LucideIcon; roles?: Role[] }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/alunos", label: "Alunos", icon: Users },
   { href: "/mensalidades", label: "Mensalidades", icon: Receipt },
+  { href: "/contas", label: "A Pagar / A Receber", icon: ArrowLeftRight },
   { href: "/fluxo-de-caixa", label: "Fluxo de Caixa", icon: Wallet },
+  { href: "/impostos", label: "Impostos (Simples)", icon: Calculator, roles: ["owner", "socio"] },
   { href: "/relatorio-anual", label: "Relatório Anual", icon: CalendarRange },
-  { href: "/banco/conciliacao", label: "Conciliação Bancária", icon: Landmark },
+  { href: "/banco/conexoes", label: "Conexões Bancárias", icon: Landmark, roles: ["owner", "socio"] },
+  { href: "/banco/conciliacao", label: "Importar Extrato", icon: Landmark, roles: ["owner", "socio"] },
   { href: "/crm", label: "CRM", icon: Contact },
   { href: "/planos", label: "Planos", icon: Package },
   { href: "/metas", label: "Metas", icon: Target },
   { href: "/tarefas", label: "Tarefas", icon: CalendarCheck },
+  { href: "/automacao", label: "Automação", icon: RefreshCw, roles: ["owner", "socio"] },
 ];
 
-function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+function NavLinks({
+  pathname,
+  role,
+  onNavigate,
+}: {
+  pathname: string;
+  role: Role;
+  onNavigate?: () => void;
+}) {
   return (
     <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-      {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+      {NAV_ITEMS.filter((item) => !item.roles || item.roles.includes(role)).map(({ href, label, icon: Icon }) => {
         const active = pathname === href || pathname.startsWith(`${href}/`);
         return (
           <Link
@@ -76,7 +95,7 @@ function PlanCard({ role }: { role: string }) {
   );
 }
 
-export function Sidebar({ role }: { role: string }) {
+export function Sidebar({ role }: { role: Role }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -108,7 +127,7 @@ export function Sidebar({ role }: { role: string }) {
                 </svg>
               </button>
             </div>
-            <NavLinks pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+            <NavLinks pathname={pathname} role={role} onNavigate={() => setMobileOpen(false)} />
             <PlanCard role={role} />
             <form action={logout} className="px-3 pb-6">
               <button
@@ -128,7 +147,7 @@ export function Sidebar({ role }: { role: string }) {
           <Logo />
         </div>
 
-        <NavLinks pathname={pathname} />
+        <NavLinks pathname={pathname} role={role} />
         <PlanCard role={role} />
 
         <form action={logout} className="px-3 pb-6">

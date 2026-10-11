@@ -1,5 +1,9 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { and, asc, eq, gte, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser, sequential } from "@/lib/db";
+import { cashTransactions, costCategories } from "@/lib/db/schema";
+import { parseIsoDate, parseYearMonth } from "@/lib/validation";
 import { formatCurrencyBRL } from "@shared/finance";
 import { NewTransactionForm } from "./new-transaction-form";
 import { MonthlyEvolutionChart } from "./monthly-evolution-chart";
@@ -63,11 +67,16 @@ export default async function FluxoDeCaixaPage({
 }: {
   searchParams: Promise<{ mes?: string; de?: string; ate?: string; evolucao?: string }>;
 }) {
-  const { mes, de, ate, evolucao } = await searchParams;
+  const params = await searchParams;
+  const mes = params.mes;
+  const evolucao = params.evolucao;
+  // Parâmetros de URL são entrada do usuário: datas malformadas são ignoradas.
+  const de = parseIsoDate(params.de);
+  const ate = parseIsoDate(params.ate);
 
   // Período customizado (de/ate) tem prioridade sobre a navegação por mês.
   const usingCustomPeriod = Boolean(de && ate);
-  const referenceMonth = mes ?? new Date().toISOString().slice(0, 7);
+  const referenceMonth = parseYearMonth(mes, new Date().toISOString().slice(0, 7));
   const nextMonth = addMonths(referenceMonth, 1);
   const previousMonth = addMonths(referenceMonth, -1);
 
@@ -87,43 +96,76 @@ export default async function FluxoDeCaixaPage({
     previousPeriodEnd = `${referenceMonth}-01`;
   }
 
-  const supabase = await createClient();
+  const user = await requireUser();
 
   const evolutionMode = evolucao === "12m" || evolucao === "ano" ? evolucao : "6m";
   const evolutionMonthsList = evolutionMonths(referenceMonth, evolutionMode);
   const evolutionStart = `${evolutionMonthsList[0]}-01`;
 
-  const [
-    { data: periodTransactions },
-    { data: categories },
-    { data: yearTransactions },
-    { data: previousPeriodTransactions },
-  ] = await Promise.all([
-    supabase
-      .from("cash_transactions_with_balance")
-      .select(
-        "id, date, created_at, description, category_id, amount, type, payment_method, running_balance, source, cost_categories(name)"
-      )
-      .gte("date", periodStart)
-      .lt("date", periodEnd)
-      .order("date", { ascending: false })
-      .order("created_at", { ascending: false })
-      .returns<TransactionRow[]>(),
-    supabase.from("cost_categories").select("id, name, type").eq("active", true).order("name"),
-    supabase
-      .from("cash_transactions")
-      .select("date, amount, type, cost_categories(name)")
-      .gte("date", evolutionStart)
-      .returns<{ date: string; amount: number; type: "entrada" | "saida"; cost_categories: { name: string } | null }[]>(),
-    supabase
-      .from("cash_transactions")
-      .select("amount, type, cost_categories(name)")
-      .gte("date", previousPeriodStart)
-      .lt("date", previousPeriodEnd)
-      .returns<{ amount: number; type: "entrada" | "saida"; cost_categories: { name: string } | null }[]>(),
-  ]);
+  const notTransfer = or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME));
 
-  const nonTransferTransactions = (periodTransactions ?? []).filter(
+  const { periodTransactions, categories, yearTransactions, previousTotals } = await withUser(user.id, async (tx) => {
+    const [period, categories, evolution, previous] = await sequential([
+      () => // O saldo acumulado vem da view (janela sobre TODO o histórico); o filtro
+      // de período é aplicado depois, () => então o saldo de cada linha é o real.
+      tx.execute<TransactionRow & { category_name: string | null }>(sql`
+        select v.id, v.date, v.created_at, v.description, v.category_id, v.amount, v.type,
+               v.payment_method, v.running_balance, v.source, cc.name as category_name
+          from public.cash_transactions_with_balance v
+          left join public.cost_categories cc on cc.id = v.category_id
+         where v.date >= ${periodStart}::date and v.date < ${periodEnd}::date
+         order by v.date desc, v.created_at desc`),
+      () => tx
+        .select({ id: costCategories.id, name: costCategories.name, type: costCategories.type })
+        .from(costCategories)
+        .where(eq(costCategories.active, true))
+        .orderBy(asc(costCategories.name)),
+      () => tx
+        .select({
+          month: sql<string>`to_char(${cashTransactions.date}, 'YYYY-MM')`,
+          type: cashTransactions.type,
+          total: sql<number>`sum(${cashTransactions.amount})`.mapWith(Number),
+        })
+        .from(cashTransactions)
+        .leftJoin(costCategories, eq(costCategories.id, cashTransactions.categoryId))
+        .where(and(gte(cashTransactions.date, evolutionStart), notTransfer))
+        .groupBy(sql`1`, cashTransactions.type),
+      () => tx
+        .select({
+          type: cashTransactions.type,
+          total: sql<number>`sum(${cashTransactions.amount})`.mapWith(Number),
+        })
+        .from(cashTransactions)
+        .leftJoin(costCategories, eq(costCategories.id, cashTransactions.categoryId))
+        .where(and(gte(cashTransactions.date, previousPeriodStart), lt(cashTransactions.date, previousPeriodEnd), notTransfer))
+        .groupBy(cashTransactions.type),
+    ]);
+
+    const previousTotals = { entrada: 0, saida: 0 };
+    for (const row of previous) previousTotals[row.type] = row.total;
+
+    return {
+      periodTransactions: period.rows.map(
+        (r): TransactionRow => ({
+          id: r.id,
+          date: r.date,
+          description: r.description,
+          category_id: r.category_id,
+          amount: Number(r.amount),
+          type: r.type,
+          payment_method: r.payment_method,
+          running_balance: Number(r.running_balance),
+          source: r.source,
+          cost_categories: r.category_name ? { name: r.category_name } : null,
+        })
+      ),
+      categories,
+      yearTransactions: evolution,
+      previousTotals,
+    };
+  });
+
+  const nonTransferTransactions = periodTransactions.filter(
     (t) => t.cost_categories?.name !== TRANSFER_CATEGORY_NAME
   );
 
@@ -135,38 +177,20 @@ export default async function FluxoDeCaixaPage({
     { entrada: 0, saida: 0 }
   );
 
-  const previousTotals = (previousPeriodTransactions ?? [])
-    .filter((t) => t.cost_categories?.name !== TRANSFER_CATEGORY_NAME)
-    .reduce(
-      (acc, t) => {
-        acc[t.type] += t.amount;
-        return acc;
-      },
-      { entrada: 0, saida: 0 }
-    );
-
   // running_balance da view já inclui transferências (é um saldo bancário
   // real, não um "resultado do negócio") — mantido como está, só os totais
   // de entrada/saída do card e o resumo por categoria excluem transferências.
-  const currentBalance = periodTransactions?.[0]?.running_balance ?? 0;
+  const currentBalance = periodTransactions[0]?.running_balance ?? 0;
   const previousBalance = currentBalance - totals.entrada + totals.saida;
 
-  const nonTransferYearTransactions = (yearTransactions ?? []).filter(
-    (t) => t.cost_categories?.name !== TRANSFER_CATEGORY_NAME
-  );
-
-  const monthlyTotals = evolutionMonthsList.map((month) => {
-    const entrada = nonTransferYearTransactions
-      .filter((t) => t.date.startsWith(month) && t.type === "entrada")
-      .reduce((sum, t) => sum + t.amount, 0);
-    const saida = nonTransferYearTransactions
-      .filter((t) => t.date.startsWith(month) && t.type === "saida")
-      .reduce((sum, t) => sum + t.amount, 0);
-    return { month, entrada, saida };
-  });
+  const monthlyTotals = evolutionMonthsList.map((month) => ({
+    month,
+    entrada: yearTransactions.find((r) => r.month === month && r.type === "entrada")?.total ?? 0,
+    saida: yearTransactions.find((r) => r.month === month && r.type === "saida")?.total ?? 0,
+  }));
 
   const categoryTotals = new Map<string, number>();
-  for (const t of periodTransactions ?? []) {
+  for (const t of periodTransactions) {
     if (t.type !== "saida") continue;
     const name = t.cost_categories?.name ?? "Sem categoria";
     categoryTotals.set(name, (categoryTotals.get(name) ?? 0) + t.amount);
@@ -201,7 +225,7 @@ export default async function FluxoDeCaixaPage({
           {usingCustomPeriod && <p className="text-sm text-ink-300">{periodLabel}</p>}
           <PeriodSelector />
         </div>
-        <NewTransactionForm categories={categories ?? []} />
+        <NewTransactionForm categories={categories} />
       </div>
 
       <div className="mt-4 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-xs text-ink-300">
@@ -319,7 +343,7 @@ export default async function FluxoDeCaixaPage({
                 <td className="font-tabular px-4 py-3">{formatCurrencyBRL(t.running_balance)}</td>
                 <td className="px-4 py-3">
                   <NewTransactionForm
-                    categories={categories ?? []}
+                    categories={categories}
                     transaction={{
                       id: t.id,
                       date: t.date,

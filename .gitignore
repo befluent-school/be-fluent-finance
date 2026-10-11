@@ -13,3 +13,10 @@ supabase/.temp
 # misc
 .DS_Store
 *.pem
+
+# PostgreSQL local de desenvolvimento (cluster próprio na porta 5435)
+.pgdata/
+# senhas/URLs locais geradas no setup de desenvolvimento
+.local/
+# credenciais administrativas na VPS
+.env.admin

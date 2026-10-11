@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Plus_Jakarta_Sans, Manrope } from "next/font/google";
 import "./globals.css";
 
@@ -18,11 +19,16 @@ export const metadata: Metadata = {
   description: "Plataforma de gestão financeira e administrativa da Be Fluent.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // A CSP usa um nonce novo por requisição (src/proxy.ts), então nenhuma
+  // página pode ser pré-renderizada estática: ler os headers força a
+  // renderização dinâmica em todo o app.
+  await headers();
+
   return (
     <html
       lang="pt-BR"

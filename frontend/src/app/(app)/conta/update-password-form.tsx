@@ -3,6 +3,9 @@
 import { useActionState } from "react";
 import { updatePassword, type UpdatePasswordState } from "@/app/actions/auth";
 
+const inputClass =
+  "mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 placeholder:text-ink-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500";
+
 export function UpdatePasswordForm() {
   const [state, action, pending] = useActionState<UpdatePasswordState, FormData>(
     updatePassword,
@@ -12,16 +15,34 @@ export function UpdatePasswordForm() {
   return (
     <form action={action} className="space-y-4">
       <div>
+        <label htmlFor="currentPassword" className="block text-sm font-medium text-ink-100">
+          Senha atual
+        </label>
+        <input
+          id="currentPassword"
+          name="currentPassword"
+          type="password"
+          autoComplete="current-password"
+          required
+          className={inputClass}
+        />
+        {state?.errors?.currentPassword && (
+          <p className="mt-1 text-xs text-status-overdue">{state.errors.currentPassword[0]}</p>
+        )}
+      </div>
+
+      <div>
         <label htmlFor="password" className="block text-sm font-medium text-ink-100">
-          Nova senha
+          Nova senha (mínimo 10 caracteres)
         </label>
         <input
           id="password"
           name="password"
           type="password"
+          autoComplete="new-password"
           required
-          minLength={6}
-          className="mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 placeholder:text-ink-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+          minLength={10}
+          className={inputClass}
         />
         {state?.errors?.password && (
           <p className="mt-1 text-xs text-status-overdue">{state.errors.password[0]}</p>
@@ -36,9 +57,10 @@ export function UpdatePasswordForm() {
           id="confirmPassword"
           name="confirmPassword"
           type="password"
+          autoComplete="new-password"
           required
-          minLength={6}
-          className="mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 placeholder:text-ink-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+          minLength={10}
+          className={inputClass}
         />
         {state?.errors?.confirmPassword && (
           <p className="mt-1 text-xs text-status-overdue">{state.errors.confirmPassword[0]}</p>

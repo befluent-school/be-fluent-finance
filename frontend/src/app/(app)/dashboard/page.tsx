@@ -1,18 +1,24 @@
-import { createClient } from "@/lib/supabase/server";
+import { and, asc, eq, gte, isNotNull, lt, lte, ne, or, isNull, sql, sum } from "drizzle-orm";
 import { formatCurrencyBRL } from "@shared/finance";
 import Link from "next/link";
+import { requireUser } from "@/lib/auth/session";
+import { Policies } from "@/lib/auth/policies";
+import { withUser, sequential } from "@/lib/db";
+import { cashTransactions, costCategories, invoices, studentTargets, tasks } from "@/lib/db/schema";
+import {
+  countActiveEnrollments,
+  getCacForMonth,
+  getInadimplencia,
+  getMonthTargets,
+  getMrr,
+  getTicketByPlan,
+} from "@/lib/queries/kpis";
+import { getPayablesOpen, getReceivablesOpen, getSimplesApuracao } from "@/lib/queries/finance";
+import { parseYearMonth } from "@/lib/validation";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { LtvCacHealth } from "@/components/ui/ltv-cac-health";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { AiInsightsCard } from "@/components/ui/ai-insights-card";
-
-type PlanTicket = {
-  plan_id: string;
-  plan_name: string;
-  active_students: number;
-  ticket_medio: number;
-  ltv_medio: number;
-};
 
 // Repasses entre as próprias contas da Be Fluent não são receita/despesa
 // real — mesmo critério já usado no Fluxo de Caixa para não inflar totais.
@@ -29,22 +35,12 @@ export default async function DashboardPage({
   searchParams: Promise<{ mes?: string }>;
 }) {
   const { mes } = await searchParams;
-  const supabase = await createClient();
+  const user = await requireUser();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user!.id)
-    .single();
-
-  const canViewNetProfit = profile?.role === "owner";
+  const canViewNetProfit = Policies.viewNetProfit.check(user);
 
   const currentMonth = new Date().toISOString().slice(0, 7);
-  const selectedMonth = mes ?? currentMonth;
+  const selectedMonth = parseYearMonth(mes, currentMonth);
   const isCurrentMonth = selectedMonth === currentMonth;
   const referenceMonth = `${selectedMonth}-01`;
   const previousMonthValue = addMonths(selectedMonth, -1);
@@ -54,82 +50,119 @@ export default async function DashboardPage({
   taskAlertThreshold.setDate(taskAlertThreshold.getDate() + 3);
   const taskAlertThresholdStr = taskAlertThreshold.toISOString().slice(0, 10);
 
-  const [
-    { data: mrrData },
-    { data: ticketData },
-    { data: cacData },
-    { data: inadimplenciaData },
-    { data: revenueTarget },
-    { data: studentTargets },
-    { count: activeEnrollmentsCount },
-    { data: cacTarget },
-    { data: ltvCacTarget },
-    { data: upcomingTasks },
-    { data: monthCashTransactions },
-    { data: allCashTransactions },
-    { data: cardPaidInvoices },
-  ] = await Promise.all([
-    supabase.from("v_mrr").select("mrr").single(),
-    supabase.from("v_ticket_medio_por_plano").select("*").returns<PlanTicket[]>(),
-    supabase
-      .from("v_cac_by_month")
-      .select("*")
-      .eq("reference_month", referenceMonth)
-      .maybeSingle(),
-    supabase.from("v_inadimplencia_atual").select("*").single(),
-    supabase
-      .from("revenue_targets")
-      .select("target_amount")
-      .eq("reference_month", referenceMonth)
-      .maybeSingle(),
-    supabase
-      .from("student_targets")
-      .select("target_count")
-      .eq("reference_month", referenceMonth),
-    supabase.from("enrollments").select("id", { count: "exact", head: true }).eq("status", "active"),
-    supabase
-      .from("cac_targets")
-      .select("max_cac")
-      .eq("reference_month", referenceMonth)
-      .maybeSingle(),
-    supabase
-      .from("ltv_cac_targets")
-      .select("min_ratio")
-      .eq("reference_month", referenceMonth)
-      .maybeSingle(),
-    supabase
-      .from("tasks")
-      .select("id, title, due_date")
-      .eq("completed", false)
-      .lte("due_date", taskAlertThresholdStr)
-      .order("due_date"),
-    // Caixa disponível: entradas já confirmadas em extrato bancário no mês selecionado.
-    supabase
-      .from("cash_transactions")
-      .select("amount, type, cost_categories(name)")
-      .gte("date", referenceMonth)
-      .lt("date", `${nextMonthValue}-01`)
-      .returns<{ amount: number; type: "entrada" | "saida"; cost_categories: { name: string } | null }[]>(),
-    // Saldo total: todo o histórico de cash_transactions, sem filtro de mês
-    // — sempre reflete o momento atual, não o mês selecionado.
-    supabase
-      .from("cash_transactions")
-      .select("amount, type")
-      .returns<{ amount: number; type: "entrada" | "saida" }[]>(),
-    // A receber: mensalidades pagas com cartão no mês selecionado — o
-    // dinheiro só conta como "caixa disponível" quando confirmado num
-    // extrato importado (categoria "Mensalidade de Aluno"), não estimamos prazo.
-    supabase
-      .from("invoices")
-      .select("total_paid, paid_date")
-      .eq("payment_method", "cartao")
-      .not("paid_date", "is", null)
-      .gte("paid_date", referenceMonth)
-      .lt("paid_date", `${nextMonthValue}-01`),
-  ]);
+  const notTransfer = or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME));
 
-  const mrr = mrrData?.mrr ?? 0;
-  const plansWithStudents = (ticketData ?? []).filter((p) => p.active_students > 0);
+  const {
+    mrr,
+    ticketData,
+    cacData,
+    inadimplencia,
+    targets,
+    totalStudentTarget,
+    activeStudentsTotal,
+    upcomingTasks,
+    caixaDisponivel,
+    saldoTotalCaixa,
+    aReceberCartao,
+    recvOpen,
+    payOpen,
+    dasApuracao,
+  } = await withUser(user.id, async (tx) => {
+    const [
+      mrr,
+      ticketData,
+      cacData,
+      inadimplencia,
+      targets,
+      [studentTargetSum],
+      activeStudentsTotal,
+      upcomingTasks,
+      [monthIncome],
+      [balance],
+      [cardPaid],
+      recvOpen,
+      payOpen,
+      dasApuracao,
+    ] = await sequential([
+      () => getMrr(tx),
+      () => getTicketByPlan(tx),
+      () => getCacForMonth(tx, referenceMonth),
+      () => getInadimplencia(tx),
+      () => getMonthTargets(tx, referenceMonth),
+      () => tx
+        .select({ total: sum(studentTargets.targetCount).mapWith(Number) })
+        .from(studentTargets)
+        .where(eq(studentTargets.referenceMonth, referenceMonth)),
+      () => countActiveEnrollments(tx),
+      () => tx
+        .select({ id: tasks.id, title: tasks.title, due_date: tasks.dueDate })
+        .from(tasks)
+        .where(and(eq(tasks.completed, false), lte(tasks.dueDate, taskAlertThresholdStr)))
+        .orderBy(asc(tasks.dueDate)),
+      () => // Caixa disponível: entradas já confirmadas em extrato bancário no mês selecionado.
+      tx
+        .select({ total: sum(cashTransactions.amount).mapWith(Number) })
+        .from(cashTransactions)
+        .leftJoin(costCategories, eq(costCategories.id, cashTransactions.categoryId))
+        .where(
+          and(
+            eq(cashTransactions.type, "entrada"),
+            gte(cashTransactions.date, referenceMonth),
+            lt(cashTransactions.date, `${nextMonthValue}-01`),
+            notTransfer
+          )
+        ),
+      () => // Saldo total: todo o histórico de cash_transactions, () => sem filtro de mês
+      // — sempre reflete o momento atual, () => não o mês selecionado. Somado no
+      // banco (o PostgREST cortava em 1000 linhas e o saldo ficava errado).
+      tx
+        .select({
+          total: sql<number>`coalesce(sum(case when ${cashTransactions.type} = 'entrada' then ${cashTransactions.amount} else -${cashTransactions.amount} end), 0)`.mapWith(Number),
+        })
+        .from(cashTransactions),
+      () => // A receber: mensalidades pagas com cartão no mês selecionado — o
+      // dinheiro só conta como "caixa disponível" quando confirmado num
+      // extrato importado (categoria "Mensalidade de Aluno"), () => não estimamos prazo.
+      tx
+        .select({ total: sum(invoices.totalPaid).mapWith(Number) })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.paymentMethod, "cartao"),
+            isNotNull(invoices.paidDate),
+            gte(invoices.paidDate, referenceMonth),
+            lt(invoices.paidDate, `${nextMonthValue}-01`)
+          )
+        ),
+      () => getReceivablesOpen(tx),
+      () => getPayablesOpen(tx),
+      // DAS da competência fechada (mês anterior ao corrente) — é o imposto
+      // que efetivamente se paga agora.
+      () => getSimplesApuracao(tx, `${addMonths(currentMonth, -1)}-01`),
+    ]);
+    return {
+      mrr,
+      ticketData,
+      cacData,
+      inadimplencia,
+      targets,
+      totalStudentTarget: studentTargetSum?.total ?? 0,
+      activeStudentsTotal,
+      upcomingTasks,
+      caixaDisponivel: monthIncome?.total ?? 0,
+      saldoTotalCaixa: balance?.total ?? 0,
+      aReceberCartao: cardPaid?.total ?? 0,
+      recvOpen,
+      payOpen,
+      dasApuracao,
+    };
+  });
+
+  const revenueTarget = targets.revenueTarget != null ? { target_amount: targets.revenueTarget } : null;
+  const cacTarget = targets.maxCac != null ? { max_cac: targets.maxCac } : null;
+  const ltvCacTarget = targets.minLtvCacRatio != null ? { min_ratio: targets.minLtvCacRatio } : null;
+
+  const plansWithStudents = ticketData.filter((p) => p.active_students > 0);
   const totalActiveStudents = plansWithStudents.reduce((sum, p) => sum + p.active_students, 0);
   const ticketMedioGeral = totalActiveStudents > 0 ? mrr / totalActiveStudents : 0;
   const ltvMedioGeral =
@@ -139,32 +172,12 @@ export default async function DashboardPage({
       : 0;
   const cac = cacData?.cac ?? 0;
 
-  const totalStudentTarget = (studentTargets ?? []).reduce(
-    (sum, t) => sum + t.target_count,
-    0
-  );
-  const activeStudentsTotal = activeEnrollmentsCount ?? 0;
-
-  const inadimplenciaTotal = inadimplenciaData?.total_atrasado ?? 0;
-  const faturasAtrasadas = inadimplenciaData?.faturas_atrasadas ?? 0;
+  const inadimplenciaTotal = inadimplencia.total_atrasado;
+  const faturasAtrasadas = inadimplencia.faturas_atrasadas;
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  const tasksOverdue = (upcomingTasks ?? []).filter((t) => t.due_date < todayStr).length;
-  const tasksDueSoon = (upcomingTasks ?? []).length;
-
-  const caixaDisponivel = (monthCashTransactions ?? [])
-    .filter((t) => t.type === "entrada" && t.cost_categories?.name !== TRANSFER_CATEGORY_NAME)
-    .reduce((sum, t) => sum + t.amount, 0);
-
-  const saldoTotalCaixa = (allCashTransactions ?? []).reduce(
-    (sum, t) => sum + (t.type === "entrada" ? t.amount : -t.amount),
-    0
-  );
-
-  const aReceberCartao = (cardPaidInvoices ?? []).reduce(
-    (sum, inv) => sum + (inv.total_paid ?? 0),
-    0
-  );
+  const tasksOverdue = upcomingTasks.filter((t) => t.due_date < todayStr).length;
+  const tasksDueSoon = upcomingTasks.length;
 
   const ticketTotals = plansWithStudents.reduce(
     (acc, p) => {
@@ -253,6 +266,55 @@ export default async function DashboardPage({
           />
         </Link>
       )}
+
+      <h2 className="mt-8 text-lg font-semibold text-ink-50">Posição financeira</h2>
+      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Link href="/contas" className="block">
+          <KpiCard
+            label="A receber em aberto"
+            value={formatCurrencyBRL(recvOpen.overdue.total + recvOpen.upcoming.total)}
+            hint={`${formatCurrencyBRL(recvOpen.overdue.total)} vencido · clique para ver`}
+            tone="positive"
+          />
+        </Link>
+        <Link href="/contas" className="block">
+          <KpiCard
+            label="A pagar em aberto"
+            value={formatCurrencyBRL(payOpen.overdue.total + payOpen.upcoming.total)}
+            hint={`${formatCurrencyBRL(payOpen.overdue.total)} vencido · clique para ver`}
+            tone="negative"
+          />
+        </Link>
+        <Link href="/contas" className="block">
+          <KpiCard
+            label="Saldo projetado"
+            value={formatCurrencyBRL(
+              recvOpen.overdue.total + recvOpen.upcoming.total - (payOpen.overdue.total + payOpen.upcoming.total)
+            )}
+            hint="A receber menos a pagar"
+            tone={
+              recvOpen.overdue.total + recvOpen.upcoming.total - (payOpen.overdue.total + payOpen.upcoming.total) >= 0
+                ? "positive"
+                : "negative"
+            }
+          />
+        </Link>
+        {canViewNetProfit && (
+          <Link href="/impostos" className="block">
+            <KpiCard
+              label="DAS a pagar (Simples)"
+              value={dasApuracao ? formatCurrencyBRL(dasApuracao.das) : "—"}
+              hint={
+                dasApuracao?.faixa
+                  ? `Competência fechada · alíquota ${(dasApuracao.effective_rate * 100).toFixed(2)}%`
+                  : "Sem receita na competência"
+              }
+              explanation="Imposto do Simples Nacional (Anexo III) da competência fechada, lançado automaticamente em Contas a Pagar na virada do mês."
+              tone="warning"
+            />
+          </Link>
+        )}
+      </div>
 
       <h2 className="mt-8 text-lg font-semibold text-ink-50">Indicadores do mês</h2>
       <div className="mt-3 grid grid-cols-1 gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
@@ -356,7 +418,7 @@ export default async function DashboardPage({
             </tr>
           </thead>
           <tbody>
-            {(ticketData ?? []).map((plan) => (
+            {ticketData.map((plan) => (
               <tr
                 key={plan.plan_id}
                 className="border-b border-ink-700/70 last:border-0 hover:bg-white/[0.03]"

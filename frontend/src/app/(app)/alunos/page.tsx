@@ -1,7 +1,10 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { asc, eq } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser, sequential } from "@/lib/db";
+import { plans as plansTable, students as studentsTable, teachers as teachersTable } from "@/lib/db/schema";
+import { toPlan, toTeacher } from "@/lib/queries/mappers";
 import { formatCurrencyBRL } from "@shared/finance";
-import type { Plan, Teacher } from "@shared/types";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { initials } from "@/lib/utils";
@@ -29,21 +32,41 @@ export default async function AlunosPage({
   searchParams: Promise<{ plano?: string }>;
 }) {
   const { plano } = await searchParams;
-  const supabase = await createClient();
+  const user = await requireUser();
 
-  const [{ data: students }, { data: plans }, { data: teachers }] = await Promise.all([
-    supabase
-      .from("students")
-      .select(
-        "id, full_name, phone, email, active, enrollments(status, monthly_value, plan_id, plans(name), teachers(full_name))"
-      )
-      .order("full_name")
-      .returns<StudentRow[]>(),
-    supabase.from("plans").select("*").eq("active", true).returns<Plan[]>(),
-    supabase.from("teachers").select("*").eq("active", true).returns<Teacher[]>(),
-  ]);
+  const { students, plans, teachers } = await withUser(user.id, async (tx) => {
+    const [studentRows, planRows, teacherRows] = await sequential([
+      () => tx.query.students.findMany({
+        columns: { id: true, fullName: true, phone: true, email: true, active: true },
+        with: {
+          enrollments: {
+            columns: { status: true, monthlyValue: true, planId: true },
+            with: { plan: { columns: { name: true } }, teacher: { columns: { fullName: true } } },
+          },
+        },
+        orderBy: asc(studentsTable.fullName),
+      }),
+      () => tx.select().from(plansTable).where(eq(plansTable.active, true)),
+      () => tx.select().from(teachersTable).where(eq(teachersTable.active, true)),
+    ]);
+    const students: StudentRow[] = studentRows.map((s) => ({
+      id: s.id,
+      full_name: s.fullName,
+      phone: s.phone,
+      email: s.email,
+      active: s.active,
+      enrollments: s.enrollments.map((e) => ({
+        status: e.status,
+        monthly_value: e.monthlyValue,
+        plan_id: e.planId,
+        plans: e.plan ? { name: e.plan.name } : null,
+        teachers: e.teacher ? { full_name: e.teacher.fullName } : null,
+      })),
+    }));
+    return { students, plans: planRows.map(toPlan), teachers: teacherRows.map(toTeacher) };
+  });
 
-  const activeStudents = (students ?? []).filter((s) =>
+  const activeStudents = students.filter((s) =>
     s.enrollments.some((e) => e.status === "active")
   );
 
@@ -54,7 +77,7 @@ export default async function AlunosPage({
   }
 
   const filteredStudents = plano
-    ? (students ?? []).filter((s) => s.enrollments[0]?.plan_id === plano)
+    ? students.filter((s) => s.enrollments[0]?.plan_id === plano)
     : students;
 
   return (
@@ -63,12 +86,12 @@ export default async function AlunosPage({
         <p className="text-sm text-ink-300">Cadastro e matrículas de mentoria individual.</p>
         <div className="flex gap-3">
           <ImportStudentsDialog />
-          <EnrollStudentForm plans={plans ?? []} teachers={teachers ?? []} />
+          <EnrollStudentForm plans={plans} teachers={teachers} />
         </div>
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        {(plans ?? []).map((plan) => (
+        {plans.map((plan) => (
           <Link key={plan.id} href={`/alunos?plano=${plan.id}`}>
             <KpiCard label={plan.name} value={String(countByPlan.get(plan.id) ?? 0)} hint="alunos ativos" />
           </Link>
@@ -78,7 +101,7 @@ export default async function AlunosPage({
       {plano && (
         <div className="mt-4 flex items-center gap-2 text-sm text-ink-300">
           <span>
-            Filtrando por: <span className="text-ink-50">{plans?.find((p) => p.id === plano)?.name}</span>
+            Filtrando por: <span className="text-ink-50">{plans.find((p) => p.id === plano)?.name}</span>
           </span>
           <Link href="/alunos" className="text-amber-400 hover:text-amber-300">
             Limpar filtro

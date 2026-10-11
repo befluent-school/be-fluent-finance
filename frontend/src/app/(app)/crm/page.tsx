@@ -1,34 +1,48 @@
-import { createClient } from "@/lib/supabase/server";
-import { createBeelyClient, type BeelyContact, type BeelyDeal, type BeelyStage } from "@/lib/beely-supabase";
+import { asc, eq } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser } from "@/lib/db";
+import { plans as plansTable, students as studentsTable, teachers as teachersTable } from "@/lib/db/schema";
+import { loadBeelyPipeline, type BeelyDeal } from "@/lib/beely-source";
 import { formatCurrencyBRL } from "@shared/finance";
-import type { Plan, Teacher } from "@shared/types";
 import { initials } from "@/lib/utils";
+import { toPlan, toTeacher } from "@/lib/queries/mappers";
 import { EnrollStudentForm } from "../alunos/enroll-student-form";
 
 export default async function CrmPage() {
-  const beely = createBeelyClient();
-  const supabase = await createClient();
+  const user = await requireUser();
 
-  const [{ data: contacts }, { data: deals }, { data: stages }, { data: plans }, { data: teachers }, { data: students }] =
-    await Promise.all([
-      beely.from("contacts").select("id, name, email, phone, source, score").returns<BeelyContact[]>(),
-      beely
-        .from("deals")
-        .select("id, title, value, status, stage_id, contact, contact_id, owner, created_at")
-        .order("created_at", { ascending: false })
-        .returns<BeelyDeal[]>(),
-      beely.from("stages").select("id, name, position").order("position").returns<BeelyStage[]>(),
-      supabase.from("plans").select("*").eq("active", true).returns<Plan[]>(),
-      supabase.from("teachers").select("*").eq("active", true).returns<Teacher[]>(),
-      supabase.from("students").select("email, phone"),
-    ]);
+  const [pipeline, { plans, teachers, students }] = await Promise.all([
+    loadBeelyPipeline(),
+    withUser(user.id, async (tx) => {
+      const plans = await tx.select().from(plansTable).where(eq(plansTable.active, true)).orderBy(asc(plansTable.name));
+      const teachers = await tx
+        .select()
+        .from(teachersTable)
+        .where(eq(teachersTable.active, true))
+        .orderBy(asc(teachersTable.fullName));
+      const students = await tx.select({ email: studentsTable.email, phone: studentsTable.phone }).from(studentsTable);
+      return { plans: plans.map(toPlan), teachers: teachers.map(toTeacher), students };
+    }),
+  ]);
 
-  const contactsByName = new Map((contacts ?? []).map((c) => [c.name, c]));
-  const stageById = new Map((stages ?? []).map((s) => [s.id, s.name]));
-  const existingEmails = new Set((students ?? []).map((s) => s.email).filter(Boolean));
-  const existingPhones = new Set((students ?? []).map((s) => s.phone).filter(Boolean));
+  if (!pipeline.ok) {
+    return (
+      <div className="card-premium rounded-lg p-8 text-center text-sm text-ink-300">
+        {pipeline.reason === "disabled"
+          ? "Integração com o Beely CRM desativada (BEELY_SOURCE=off)."
+          : "Não foi possível ler os dados do Beely CRM agora. Tente novamente em instantes."}
+      </div>
+    );
+  }
 
-  const allDeals = deals ?? [];
+  const { contacts, deals, stages } = pipeline;
+
+  const contactsByName = new Map(contacts.map((c) => [c.name, c]));
+  const stageById = new Map(stages.map((s) => [s.id, s.name]));
+  const existingEmails = new Set(students.map((s) => s.email).filter(Boolean));
+  const existingPhones = new Set(students.map((s) => s.phone).filter(Boolean));
+
+  const allDeals = deals;
   const total = allDeals.length;
   const won = allDeals.filter((d) => d.status === "won").length;
   const lost = allDeals.filter((d) => d.status === "lost").length;
@@ -118,8 +132,8 @@ export default async function CrmPage() {
                       <span className="text-xs text-ink-500">Já é aluno</span>
                     ) : (
                       <EnrollStudentForm
-                        plans={plans ?? []}
-                        teachers={teachers ?? []}
+                        plans={plans}
+                        teachers={teachers}
                         defaultValues={{
                           fullName: deal.contact ?? deal.title,
                           email: contact?.email ?? undefined,

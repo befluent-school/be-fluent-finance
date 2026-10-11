@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { and, eq, gte, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { requireUser } from "@/lib/auth/session";
+import { withUser, type Tx, sequential } from "@/lib/db";
+import { cashTransactions, costCategories, invoices as invoicesTable } from "@/lib/db/schema";
 import { formatCurrencyBRL } from "@shared/finance";
 import { variation, VariationBadge } from "@/components/ui/variation-badge";
 import { MonthlyEvolutionChart } from "../fluxo-de-caixa/monthly-evolution-chart";
@@ -21,25 +24,33 @@ const MONTH_LABELS = [
   "Dezembro",
 ];
 
-type CashRow = {
-  date: string;
-  amount: number;
-  type: "entrada" | "saida";
-  cost_categories: { name: string } | null;
-};
+type MonthTotal = { month: string; entrada: number; saida: number };
 
-function monthTotals(rows: CashRow[], year: string) {
+/** Entradas e saídas por mês do ano (sem transferências entre contas), somadas no banco. */
+async function monthTotals(tx: Tx, year: string): Promise<MonthTotal[]> {
+  const rows = await tx
+    .select({
+      month: sql<string>`to_char(${cashTransactions.date}, 'YYYY-MM')`,
+      type: cashTransactions.type,
+      total: sql<number>`sum(${cashTransactions.amount})`.mapWith(Number),
+    })
+    .from(cashTransactions)
+    .leftJoin(costCategories, eq(costCategories.id, cashTransactions.categoryId))
+    .where(
+      and(
+        gte(cashTransactions.date, `${year}-01-01`),
+        lt(cashTransactions.date, `${Number(year) + 1}-01-01`),
+        or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME))
+      )
+    )
+    .groupBy(sql`1`, cashTransactions.type);
+
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
-  const nonTransfer = rows.filter((r) => r.cost_categories?.name !== TRANSFER_CATEGORY_NAME);
-  return months.map((month) => {
-    const entrada = nonTransfer
-      .filter((r) => r.date.startsWith(month) && r.type === "entrada")
-      .reduce((sum, r) => sum + r.amount, 0);
-    const saida = nonTransfer
-      .filter((r) => r.date.startsWith(month) && r.type === "saida")
-      .reduce((sum, r) => sum + r.amount, 0);
-    return { month, entrada, saida };
-  });
+  return months.map((month) => ({
+    month,
+    entrada: rows.find((r) => r.month === month && r.type === "entrada")?.total ?? 0,
+    saida: rows.find((r) => r.month === month && r.type === "saida")?.total ?? 0,
+  }));
 }
 
 export default async function RelatorioAnualPage({
@@ -49,40 +60,32 @@ export default async function RelatorioAnualPage({
 }) {
   const { ano } = await searchParams;
   const currentYear = new Date().getFullYear().toString();
-  const selectedYear = ano ?? currentYear;
+  const selectedYear = ano && /^\d{4}$/.test(ano) ? ano : currentYear;
   const previousYear = (Number(selectedYear) - 1).toString();
 
-  const supabase = await createClient();
+  const user = await requireUser();
 
-  const [{ data: yearRows }, { data: previousYearRows }, { data: invoices }] = await Promise.all([
-    supabase
-      .from("cash_transactions")
-      .select("date, amount, type, cost_categories(name)")
-      .gte("date", `${selectedYear}-01-01`)
-      .lt("date", `${Number(selectedYear) + 1}-01-01`)
-      .returns<CashRow[]>(),
-    supabase
-      .from("cash_transactions")
-      .select("date, amount, type, cost_categories(name)")
-      .gte("date", `${previousYear}-01-01`)
-      .lt("date", `${selectedYear}-01-01`)
-      .returns<CashRow[]>(),
-    supabase
-      .from("invoices")
-      .select("reference_month, paid_date")
-      .gte("reference_month", `${selectedYear}-01-01`)
-      .lt("reference_month", `${Number(selectedYear) + 1}-01-01`)
-      .not("paid_date", "is", null),
-  ]);
-
-  const months = monthTotals(yearRows ?? [], selectedYear);
-  const previousMonths = monthTotals(previousYearRows ?? [], previousYear);
-
-  const paidInvoicesByMonth = new Map<string, number>();
-  for (const inv of invoices ?? []) {
-    const month = inv.reference_month.slice(0, 7);
-    paidInvoicesByMonth.set(month, (paidInvoicesByMonth.get(month) ?? 0) + 1);
-  }
+  const { months, previousMonths, paidInvoicesByMonth } = await withUser(user.id, async (tx) => {
+    const [months, previousMonths, paid] = await sequential([
+      () => monthTotals(tx, selectedYear),
+      () => monthTotals(tx, previousYear),
+      () => tx
+        .select({
+          month: sql<string>`to_char(${invoicesTable.referenceMonth}, 'YYYY-MM')`,
+          count: sql<number>`count(*)`.mapWith(Number),
+        })
+        .from(invoicesTable)
+        .where(
+          and(
+            gte(invoicesTable.referenceMonth, `${selectedYear}-01-01`),
+            lt(invoicesTable.referenceMonth, `${Number(selectedYear) + 1}-01-01`),
+            isNotNull(invoicesTable.paidDate)
+          )
+        )
+        .groupBy(sql`1`),
+    ]);
+    return { months, previousMonths, paidInvoicesByMonth: new Map(paid.map((r) => [r.month, r.count])) };
+  });
 
   const totalEntrada = months.reduce((sum, m) => sum + m.entrada, 0);
   const totalSaida = months.reduce((sum, m) => sum + m.saida, 0);
