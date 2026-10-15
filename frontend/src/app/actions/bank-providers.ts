@@ -167,8 +167,13 @@ export async function testProviderConnection(id: string): Promise<{ ok: boolean;
       if (!connector) return { ok: false, message: "Conector não implementado." };
       const creds = decryptCredentials(p.credentialsEnc);
       const res = await connector.testConnection(p.config ?? {}, creds);
-      return res.ok ? { ok: true, message: "Conexão OK." } : { ok: false, message: res.error };
+      if (!res.ok) return { ok: false, message: res.error };
+      // Teste OK = credenciais válidas: já deixa a conexão ativa, para o botão
+      // "Sincronizar agora" (e o cron) funcionarem sem um passo extra manual.
+      if (!p.active) await tx.update(bankProviders).set({ active: true }).where(eq(bankProviders.id, id));
+      return { ok: true, message: "Conexão OK. Conexão ativada — já pode sincronizar." };
     });
+    if (outcome.ok) revalidatePath("/banco/conexoes");
     return outcome;
   } catch (err) {
     logDbError("testProviderConnection", err);

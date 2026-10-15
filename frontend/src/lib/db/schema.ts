@@ -136,9 +136,27 @@ export const plans = pgTable("plans", {
 export const teachers = pgTable("teachers", {
   id: uuid("id").primaryKey().defaultRandom(),
   fullName: text("full_name").notNull(),
+  paymentType: text("payment_type")
+    .notNull()
+    .default("outro")
+    .$type<"por_hora" | "comissao" | "repasse_integral" | "fixo" | "outro">(),
   paymentRuleText: text("payment_rule_text"),
   paymentReferenceValue: money("payment_reference_value"),
   active: boolean("active").notNull().default(true),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export const teacherPayments = pgTable("teacher_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  teacherId: uuid("teacher_id").notNull(),
+  referenceMonth: day("reference_month").notNull(),
+  lessonsGiven: integer("lessons_given").notNull().default(0),
+  suggestedAmount: numeric("suggested_amount", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  finalAmount: numeric("final_amount", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  status: text("status").notNull().default("aberto").$type<"aberto" | "confirmado">(),
+  payableId: uuid("payable_id"),
+  notes: text("notes"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
@@ -401,6 +419,15 @@ export const payablesRelations = relations(payables, ({ one }) => ({
     fields: [payables.recurringTemplateId],
     references: [recurringPayables.id],
   }),
+}));
+
+export const teachersRelations = relations(teachers, ({ many }) => ({
+  payments: many(teacherPayments),
+}));
+
+export const teacherPaymentsRelations = relations(teacherPayments, ({ one }) => ({
+  teacher: one(teachers, { fields: [teacherPayments.teacherId], references: [teachers.id] }),
+  payable: one(payables, { fields: [teacherPayments.payableId], references: [payables.id] }),
 }));
 
 export const recurringPayablesRelations = relations(recurringPayables, ({ one, many }) => ({

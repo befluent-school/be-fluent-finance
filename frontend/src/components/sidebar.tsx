@@ -17,6 +17,7 @@ import {
   ArrowLeftRight,
   Calculator,
   RefreshCw,
+  GraduationCap,
   type LucideIcon,
 } from "lucide-react";
 import { logout } from "@/app/actions/auth";
@@ -29,6 +30,7 @@ type Role = "owner" | "socio" | "funcionario";
 const NAV_ITEMS: { href: string; label: string; icon: LucideIcon; roles?: Role[] }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/alunos", label: "Alunos", icon: Users },
+  { href: "/professores", label: "Professores", icon: GraduationCap, roles: ["owner", "socio"] },
   { href: "/mensalidades", label: "Mensalidades", icon: Receipt },
   { href: "/contas", label: "A Pagar / A Receber", icon: ArrowLeftRight },
   { href: "/fluxo-de-caixa", label: "Fluxo de Caixa", icon: Wallet },
