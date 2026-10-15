@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Tx } from "@/lib/db";
 import { bankProviders, cashTransactions, costCategories } from "@/lib/db/schema";
 import { decryptCredentials } from "./credentials";
@@ -163,7 +163,70 @@ export async function syncAllActiveProviders(tx: Tx, today: string): Promise<Syn
   for (const { id } of active) {
     outcomes.push(await syncProvider(tx, id, today));
   }
+  // Segunda passagem: após inserir todos os providers, detecta transferências
+  // que não foram pareadas durante o sync individual (ex: ASAAS sincroniza
+  // primeiro sem encontrar o par do Inter, que ainda não estava no banco).
+  await reconcileTransfers(tx);
   return outcomes;
+}
+
+/**
+ * Varre cash_transactions sem categoria e tenta pareá-las como "Transferência
+ * entre Contas": dois lançamentos de tipo oposto, mesma data e mesmo valor
+ * (±R$ 0,01), ambos sem categoria. Roda depois que todos os providers
+ * sincronizaram, eliminando a dependência de ordem de inserção.
+ * Exportada para poder ser chamada também no sync individual (botão manual).
+ */
+export async function reconcileTransfers(tx: Tx): Promise<void> {
+  const [transferCat] = await tx
+    .select({ id: costCategories.id })
+    .from(costCategories)
+    .where(eq(costCategories.name, TRANSFER_CATEGORY));
+  if (!transferCat) return;
+
+  // Só considera transações vindas de bancos (não manuais) para evitar
+  // classificar erroneamente mensalidades coincidentes como transferências.
+  const uncategorized = await tx
+    .select({
+      id: cashTransactions.id,
+      date: cashTransactions.date,
+      amount: cashTransactions.amount,
+      type: cashTransactions.type,
+      source: cashTransactions.source,
+    })
+    .from(cashTransactions)
+    .where(and(isNull(cashTransactions.categoryId), inArray(cashTransactions.source, ["asaas", "inter", "api_sync"])))
+    .orderBy(cashTransactions.date, cashTransactions.amount);
+
+  const pool = [...uncategorized];
+  const toUpdate: string[] = [];
+
+  for (let i = 0; i < pool.length; i++) {
+    const a = pool[i];
+    if (!a) continue;
+    const oppositeType = a.type === "entrada" ? "saida" : "entrada";
+    const j = pool.findIndex(
+      (b, k) =>
+        k > i &&
+        b.date === a.date &&
+        b.type === oppositeType &&
+        b.source !== a.source &&
+        Math.abs(Number(b.amount) - Number(a.amount)) < 0.01
+    );
+    if (j !== -1) {
+      toUpdate.push(a.id, pool[j]!.id);
+      pool.splice(j, 1);
+      pool.splice(i, 1);
+      i--;
+    }
+  }
+
+  if (toUpdate.length === 0) return;
+
+  await tx
+    .update(cashTransactions)
+    .set({ categoryId: transferCat.id })
+    .where(inArray(cashTransactions.id, toUpdate));
 }
 
 /**

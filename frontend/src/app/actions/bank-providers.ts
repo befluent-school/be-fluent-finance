@@ -11,7 +11,7 @@ import { Policies } from "@/lib/auth/policies";
 import { encryptCredentials, decryptCredentials } from "@/lib/bank/credentials";
 import { asaasConnector } from "@/lib/bank/asaas";
 import { interConnector } from "@/lib/bank/inter";
-import { syncProvider } from "@/lib/bank/sync";
+import { syncProvider, reconcileTransfers } from "@/lib/bank/sync";
 import type { BankConnector } from "@/lib/bank/types";
 
 // Conexões bancárias são dado sensível: owner/socio (mesmo RLS da tabela).
@@ -189,7 +189,11 @@ export async function syncProviderNow(id: string): Promise<{ ok: boolean; messag
 
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const outcome = await withUser(user.id, (tx) => syncProvider(tx, id, today));
+    const outcome = await withUser(user.id, async (tx) => {
+      const result = await syncProvider(tx, id, today);
+      await reconcileTransfers(tx);
+      return result;
+    });
     revalidatePath("/banco/conexoes");
     revalidatePath("/fluxo-de-caixa");
     revalidatePath("/dashboard");
