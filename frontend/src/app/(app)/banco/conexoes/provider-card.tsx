@@ -26,6 +26,8 @@ export type ProviderCardData = {
   lastError: string | null;
   lastSyncedAt: string;
   lastImportedCount: number;
+  openingBalance: number | null;
+  openingBalanceDate: string | null;
   hasCreds: {
     api_key: boolean;
     client_id: boolean;
@@ -182,6 +184,36 @@ export function ProviderCard({ data }: { data: ProviderCardData }) {
           <Field label="Buscar quantos dias para trás a cada sync">
             <input name="syncWindowDays" type="number" min={1} max={90} defaultValue={data.syncWindowDays} className={inputClass} />
           </Field>
+
+          <div className="rounded-md border border-ink-700/60 bg-ink-800/30 p-3">
+            <p className="mb-2 text-xs font-medium text-ink-200">Saldo inicial da conta</p>
+            <p className="mb-3 text-xs text-ink-400">
+              Define o saldo da conta na data de início do histórico importado. O sistema insere
+              uma transação de abertura para que o saldo acumulado no Fluxo de Caixa parta do
+              valor real em vez de zero.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Saldo inicial (R$)">
+                <input
+                  name="openingBalance"
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  defaultValue={data.openingBalance ?? ""}
+                  placeholder="ex: 6393.59"
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Data do saldo inicial">
+                <input
+                  name="openingBalanceDate"
+                  type="date"
+                  defaultValue={data.openingBalanceDate ?? ""}
+                  className={inputClass}
+                />
+              </Field>
+            </div>
+          </div>
 
           {state?.message && <p className="text-sm text-status-overdue">{state.message}</p>}
 

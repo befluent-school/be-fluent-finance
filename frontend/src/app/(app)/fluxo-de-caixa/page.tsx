@@ -28,6 +28,10 @@ const SOURCE_LABEL: Record<string, string> = {
   manual: "Manual",
   pluggy: "Pluggy (legado)",
   manual_import: "Extrato importado",
+  opening: "Saldo inicial",
+  asaas: "ASAAS",
+  inter: "Inter PJ",
+  api_sync: "Banco (sync)",
 };
 
 // Repasses entre as próprias contas da Be Fluent (ex: Asaas -> Inter)
@@ -102,7 +106,10 @@ export default async function FluxoDeCaixaPage({
   const evolutionMonthsList = evolutionMonths(referenceMonth, evolutionMode);
   const evolutionStart = `${evolutionMonthsList[0]}-01`;
 
-  const notTransfer = or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME));
+  const notTransfer = and(
+    or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME)),
+    ne(cashTransactions.source, "opening"),
+  );
 
   const { periodTransactions, categories, yearTransactions, previousTotals } = await withUser(user.id, async (tx) => {
     const [period, categories, evolution, previous] = await sequential([
@@ -166,7 +173,7 @@ export default async function FluxoDeCaixaPage({
   });
 
   const nonTransferTransactions = periodTransactions.filter(
-    (t) => t.cost_categories?.name !== TRANSFER_CATEGORY_NAME
+    (t) => t.cost_categories?.name !== TRANSFER_CATEGORY_NAME && t.source !== "opening"
   );
 
   const totals = nonTransferTransactions.reduce(

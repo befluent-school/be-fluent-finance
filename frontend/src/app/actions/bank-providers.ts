@@ -2,9 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import * as z from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { withUser } from "@/lib/db";
-import { bankProviders } from "@/lib/db/schema";
+import { bankProviders, cashTransactions } from "@/lib/db/schema";
 import { logDbError } from "@/lib/db/errors";
 import { FORBIDDEN_MESSAGE, getActionUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
@@ -131,6 +131,17 @@ export async function saveProviderCredentials(_state: ProviderFormState, formDat
       const windowRaw = formData.get("syncWindowDays");
       const syncWindowDays = Number(windowRaw);
 
+      const openingBalanceRaw = formData.get("openingBalance");
+      const openingBalanceDateRaw = formData.get("openingBalanceDate");
+      const openingBalance =
+        typeof openingBalanceRaw === "string" && openingBalanceRaw.trim() !== ""
+          ? Number(openingBalanceRaw.replace(",", "."))
+          : null;
+      const openingBalanceDate =
+        typeof openingBalanceDateRaw === "string" && openingBalanceDateRaw.trim() !== ""
+          ? openingBalanceDateRaw.trim()
+          : null;
+
       await tx
         .update(bankProviders)
         .set({
@@ -139,8 +150,27 @@ export async function saveProviderCredentials(_state: ProviderFormState, formDat
           ...(Number.isFinite(syncWindowDays) && syncWindowDays >= 1 && syncWindowDays <= 90
             ? { syncWindowDays }
             : {}),
+          ...(openingBalance !== null ? { openingBalance } : {}),
+          ...(openingBalanceDate ? { openingBalanceDate } : {}),
         })
         .where(eq(bankProviders.id, id));
+
+      // Upsert da transação de abertura: remove a anterior (se houver) e insere nova.
+      if (openingBalance !== null && openingBalance > 0 && openingBalanceDate) {
+        await tx
+          .delete(cashTransactions)
+          .where(and(eq(cashTransactions.bankProviderId, id), eq(cashTransactions.source, "opening")));
+        await tx.insert(cashTransactions).values({
+          date: openingBalanceDate,
+          description: `Saldo inicial — ${p.label}`,
+          amount: openingBalance,
+          type: "entrada",
+          source: "opening",
+          bankProviderId: id,
+          dedupeKey: `opening|${id}`,
+        });
+      }
+
       return "ok" as const;
     });
     if (result === "notfound") return { message: "Conexão não encontrada." };

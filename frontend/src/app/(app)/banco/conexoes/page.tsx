@@ -48,6 +48,8 @@ export default async function ConexoesPage() {
       lastError: p.lastError,
       lastSyncedAt: fmtDateTime(p.lastSyncedAt),
       lastImportedCount: p.lastImportedCount,
+      openingBalance: p.openingBalance ?? null,
+      openingBalanceDate: p.openingBalanceDate ?? null,
       hasCreds: {
         api_key: Boolean(creds.api_key),
         client_id: Boolean(creds.client_id),
