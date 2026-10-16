@@ -1,3 +1,4 @@
+import { todayBR } from "@/lib/dates";
 import { and, asc, eq, gte, lte } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
 import { withUser, sequential } from "@/lib/db";
@@ -20,16 +21,16 @@ export default async function TarefasPage({
   searchParams: Promise<{ year?: string; month?: string; date?: string }>;
 }) {
   const params = await searchParams;
-  const now = new Date();
+  const today = todayBR();
   const parsedYear = params.year ? parseInt(params.year, 10) : NaN;
   const parsedMonth = params.month ? parseInt(params.month, 10) : NaN;
-  const year = parsedYear >= 2000 && parsedYear <= 2100 ? parsedYear : now.getFullYear();
-  const month = parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : now.getMonth() + 1;
+  const year = parsedYear >= 2000 && parsedYear <= 2100 ? parsedYear : Number(today.slice(0, 4));
+  const month = parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : Number(today.slice(5, 7));
   const selectedDate =
-    parseIsoDate(params.date) ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    parseIsoDate(params.date) ?? today;
 
   const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
-  const monthEnd = new Date(year, month, 0).toISOString().slice(0, 10);
+  const monthEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 
   const user = await requireUser();
 

@@ -305,7 +305,7 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
               </div>
 
               {sheetRows.length > 0 && (
-                <div className="max-h-48 overflow-y-auto card-premium rounded-md">
+                <div className="max-h-48 overflow-auto card-premium rounded-md">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-ink-700 bg-white/[0.03] text-ink-300">
@@ -369,7 +369,7 @@ export function ImportStatementDialog({ categories }: { categories: Category[] }
                 </p>
               )}
 
-              <div className="max-h-96 overflow-y-auto card-premium rounded-md">
+              <div className="max-h-96 overflow-auto card-premium rounded-md">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-ink-700 bg-white/[0.03] text-xs text-ink-300">

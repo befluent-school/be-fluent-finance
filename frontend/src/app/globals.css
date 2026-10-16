@@ -227,3 +227,15 @@ h1, h2, h3, h4, h5, .font-display {
 .animate-rise {
   animation: rise 0.5s ease-out forwards;
 }
+
+/*
+ * Modais (<dialog>): as classes w-full + max-w-* anulam o respiro padrão do
+ * navegador. Garante margem lateral e altura máxima no celular, com rolagem
+ * interna quando o formulário é maior que a tela.
+ */
+dialog:modal {
+  width: calc(100% - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

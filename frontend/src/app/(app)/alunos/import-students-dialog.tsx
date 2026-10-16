@@ -199,7 +199,7 @@ export function ImportStudentsDialog() {
                 )}
               </div>
 
-              <div className="max-h-80 overflow-y-auto card-premium rounded-md">
+              <div className="max-h-80 overflow-auto card-premium rounded-md">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-ink-700 bg-white/[0.03] text-xs text-ink-300">
@@ -256,7 +256,7 @@ export function ImportStudentsDialog() {
                 {results.filter((r) => r.success).length} de {results.length} aluno(s) importado(s)
                 com sucesso.
               </p>
-              <div className="max-h-80 overflow-y-auto card-premium rounded-md">
+              <div className="max-h-80 overflow-auto card-premium rounded-md">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-ink-700 bg-white/[0.03] text-xs text-ink-300">

@@ -1,11 +1,11 @@
 import { todayBR, formatMonthBR } from "@/lib/dates";
-import { and, asc, eq, gte, isNotNull, lt, lte, ne, or, isNull, sql, sum } from "drizzle-orm";
+import { and, asc, eq, gte, isNotNull, isNull, lt, lte, sql, sum } from "drizzle-orm";
 import { formatCurrencyBRL } from "@shared/finance";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
 import { withUser, sequential } from "@/lib/db";
-import { cashTransactions, costCategories, invoices, studentTargets, tasks } from "@/lib/db/schema";
+import { invoices, studentTargets, tasks } from "@/lib/db/schema";
 import {
   countActiveEnrollments,
   getCacForMonth,
@@ -23,7 +23,6 @@ import { AiInsightsCard } from "@/components/ui/ai-insights-card";
 
 // Repasses entre as próprias contas da Be Fluent não são receita/despesa
 // real — mesmo critério já usado no Fluxo de Caixa para não inflar totais.
-const TRANSFER_CATEGORY_NAME = "Transferência entre Contas";
 
 function addMonths(referenceMonth: string, delta: number): string {
   const [year, month] = referenceMonth.split("-").map(Number);
@@ -47,14 +46,12 @@ export default async function DashboardPage({
   const previousMonthValue = addMonths(selectedMonth, -1);
   const nextMonthValue = addMonths(selectedMonth, 1);
 
-  const taskAlertThreshold = new Date();
-  taskAlertThreshold.setDate(taskAlertThreshold.getDate() + 3);
-  const taskAlertThresholdStr = taskAlertThreshold.toISOString().slice(0, 10);
-
-  const notTransfer = and(
-    or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME)),
-    ne(cashTransactions.source, "opening")
-  );
+  // Horizonte de alerta de tarefas: hoje (fuso de Brasília) + 3 dias.
+  const taskAlertThresholdStr = (() => {
+    const d = new Date(`${todayBR()}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 3);
+    return d.toISOString().slice(0, 10);
+  })();
 
   const {
     mrr,
@@ -103,19 +100,15 @@ export default async function DashboardPage({
         .from(tasks)
         .where(and(eq(tasks.completed, false), lte(tasks.dueDate, taskAlertThresholdStr)))
         .orderBy(asc(tasks.dueDate)),
-      () => // Caixa disponível: entradas já confirmadas em extrato bancário no mês selecionado.
-      tx
-        .select({ total: sum(cashTransactions.amount).mapWith(Number) })
-        .from(cashTransactions)
-        .leftJoin(costCategories, eq(costCategories.id, cashTransactions.categoryId))
-        .where(
-          and(
-            eq(cashTransactions.type, "entrada"),
-            gte(cashTransactions.date, referenceMonth),
-            lt(cashTransactions.date, `${nextMonthValue}-01`),
-            notTransfer
-          )
-        ),
+      // Faturamento do mês: a MESMA base usada no Simples Nacional (view
+      // v_receita_bruta_mensal) — sem transferências, saldos iniciais,
+      // antecipações, estornos e entradas marcadas como "Não é Receita".
+      async () => {
+        const { rows } = await tx.execute<{ total: string }>(sql`
+          select receita_calculada as total from public.v_receita_bruta_mensal
+           where reference_month = ${referenceMonth}::date`);
+        return rows.map((row) => ({ total: Number(row.total) }));
+      },
       // Saldo total de hoje: mesmo cálculo do Fluxo de Caixa (ancorado no saldo inicial).
       async () => {
         const { rows } = await tx.execute<{ total: string }>(sql`
@@ -133,6 +126,8 @@ export default async function DashboardPage({
           and(
             eq(invoices.paymentMethod, "cartao"),
             isNotNull(invoices.paidDate),
+            // Já casada com um lançamento do extrato = dinheiro já caiu.
+            isNull(invoices.cashTransactionId),
             gte(invoices.paidDate, referenceMonth),
             lt(invoices.paidDate, `${nextMonthValue}-01`)
           )
@@ -231,10 +226,10 @@ export default async function DashboardPage({
       <h2 className="mt-6 text-lg font-semibold text-ink-50">Caixa</h2>
       <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <KpiCard
-          label="Caixa disponível (mês)"
+          label="Faturamento do mês (extrato)"
           value={formatCurrencyBRL(caixaDisponivel)}
-          hint="Já confirmado em extrato bancário"
-          explanation="Soma das entradas já confirmadas em extrato bancário importado neste mês, excluindo transferências entre contas próprias. É dinheiro que já está de fato na conta."
+          hint="Receita que já caiu nos bancos"
+          explanation="Receita do mês confirmada nos extratos (ASAAS + Inter), já descontados estornos e excluídos transferências entre contas, saldos iniciais, antecipações de recebíveis e entradas marcadas como 'Não é Receita'. É a mesma base usada em Impostos."
           tone="positive"
         />
         <KpiCard
@@ -373,7 +368,7 @@ export default async function DashboardPage({
       <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <ProgressBar
           label="Meta de faturamento"
-          current={mrr}
+          current={caixaDisponivel}
           target={revenueTarget?.target_amount ?? 0}
           formatValue={formatCurrencyBRL}
           remainingLabel={(remaining) => `Faltam ${formatCurrencyBRL(remaining)} para bater a meta.`}

@@ -105,7 +105,7 @@ export async function suggestCategoriesForImport(
   try {
     const client = createAnthropicClient();
     const response = await client.messages.create({
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       max_tokens: 2048,
       system: `Você categoriza lançamentos de extrato bancário de uma escola de mentoria de inglês. Categorias disponíveis: ${categories.join(", ")}. Para cada descrição numerada, responda APENAS com o número seguido de ":" e o nome exato de uma categoria da lista (ou "Nenhuma" se não tiver certeza). Uma linha por item, sem texto extra.`,
       messages: [

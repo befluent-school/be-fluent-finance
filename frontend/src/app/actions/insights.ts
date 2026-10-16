@@ -1,5 +1,6 @@
 "use server";
 
+import { sql } from "drizzle-orm";
 import { todayBR } from "@/lib/dates";
 import { withUser, sequential } from "@/lib/db";
 import { getActionUser } from "@/lib/auth/session";
@@ -32,23 +33,35 @@ export async function getFinancialInsights(): Promise<InsightsResult> {
   const todayStr = todayBR();
 
   const data = await withUser(user.id, async (tx) => {
-    const [mrr, cacData, inadimplencia, targets, overdueTasks, activeStudents] = await sequential([
+    const [mrr, cacData, inadimplencia, targets, overdueTasks, activeStudents, cash] = await sequential([
       () => getMrr(tx),
       () => getCacForMonth(tx, referenceMonth),
       () => getInadimplencia(tx),
       () => getMonthTargets(tx, referenceMonth),
       () => countOverdueTasks(tx, todayStr),
       () => countActiveEnrollments(tx),
+      // Números reais do extrato: faturamento do mês e saldo em caixa hoje.
+      async () => {
+        const { rows } = await tx.execute<{ receita: string | null; saldo: string | null }>(sql`
+          select
+            (select receita_calculada from public.v_receita_bruta_mensal
+              where reference_month = ${referenceMonth}::date) as receita,
+            (select running_balance from public.cash_transactions_with_balance
+              where in_balance order by seq desc limit 1) as saldo`);
+        return { receita: Number(rows[0]?.receita ?? 0), saldo: Number(rows[0]?.saldo ?? 0) };
+      },
     ]);
-    return { mrr, cacData, inadimplencia, targets, overdueTasks, activeStudents };
+    return { mrr, cacData, inadimplencia, targets, overdueTasks, activeStudents, cash };
   });
 
-  const { mrr, cacData, inadimplencia, targets, overdueTasks, activeStudents } = data;
+  const { mrr, cacData, inadimplencia, targets, overdueTasks, activeStudents, cash } = data;
   const cac = cacData?.cac ?? 0;
 
   const summary = `
 Dados reais do mês corrente (${referenceMonth.slice(0, 7)}):
-- MRR (receita recorrente mensal): R$ ${mrr.toFixed(2)}
+- Faturamento do mês até hoje (confirmado nos extratos bancários): R$ ${cash.receita.toFixed(2)}
+- MRR (receita recorrente contratada): R$ ${mrr.toFixed(2)}
+- Saldo total em caixa hoje (todas as contas): R$ ${cash.saldo.toFixed(2)}
 - Meta de faturamento do mês: ${targets.revenueTarget != null ? `R$ ${targets.revenueTarget.toFixed(2)}` : "não definida"}
 - Alunos ativos: ${activeStudents}
 - CAC do mês: ${cac > 0 ? `R$ ${cac.toFixed(2)}` : "sem gasto de marketing lançado"}
@@ -62,7 +75,7 @@ Dados reais do mês corrente (${referenceMonth.slice(0, 7)}):
   try {
     const client = createAnthropicClient();
     const response = await client.messages.create({
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: summary }],

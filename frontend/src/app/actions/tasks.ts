@@ -105,7 +105,14 @@ function nextDueDate(dueDate: string, recurrence: "daily" | "weekly" | "monthly"
   const date = new Date(dueDate + "T00:00:00Z");
   if (recurrence === "daily") date.setUTCDate(date.getUTCDate() + 1);
   if (recurrence === "weekly") date.setUTCDate(date.getUTCDate() + 7);
-  if (recurrence === "monthly") date.setUTCMonth(date.getUTCMonth() + 1);
+  if (recurrence === "monthly") {
+    // 31/01 → 28/02 (último dia do mês seguinte), nunca "pula" para março.
+    const day = date.getUTCDate();
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() + 1);
+    const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+    date.setUTCDate(Math.min(day, lastDay));
+  }
   return date.toISOString().slice(0, 10);
 }
 

@@ -202,6 +202,8 @@ export const invoices = pgTable("invoices", {
   lateFeeAmount: money("late_fee_amount").notNull().default(0),
   interestAmount: money("interest_amount").notNull().default(0),
   totalPaid: money("total_paid"),
+  /** Lançamento do extrato que baixou esta mensalidade (migração 0039). */
+  cashTransactionId: uuid("cash_transaction_id"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });

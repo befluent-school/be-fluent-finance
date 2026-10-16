@@ -1,3 +1,4 @@
+import { todayBR } from "@/lib/dates";
 import Link from "next/link";
 import { and, eq, gte, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
@@ -60,7 +61,7 @@ export default async function RelatorioAnualPage({
   searchParams: Promise<{ ano?: string }>;
 }) {
   const { ano } = await searchParams;
-  const currentYear = new Date().getFullYear().toString();
+  const currentYear = todayBR().slice(0, 4);
   const selectedYear = ano && /^\d{4}$/.test(ano) ? ano : currentYear;
   const previousYear = (Number(selectedYear) - 1).toString();
 

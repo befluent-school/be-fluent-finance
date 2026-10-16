@@ -235,7 +235,10 @@ export async function importProviderHistory(id: string, since: string): Promise<
     for (const path of ["/banco/conexoes", "/fluxo-de-caixa", "/dashboard", "/impostos", "/relatorio-anual", "/mensalidades"]) {
       revalidatePath(path);
     }
-    if (!outcome.ok) return { ok: false, message: outcome.error ?? "Falha ao importar." };
+    if (!outcome.ok) {
+      const saved = outcome.imported > 0 ? `${outcome.imported} lançamento(s) já gravado(s). ` : "";
+      return { ok: false, message: `${saved}${outcome.error ?? "Falha ao importar."}` };
+    }
     return { ok: true, message: `Histórico importado: ${outcome.imported} nova(s), ${outcome.skipped} já existia(m).` };
   } catch (err) {
     logDbError("importProviderHistory", err);

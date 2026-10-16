@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -63,6 +63,7 @@ function NavLinks({
             key={href}
             href={href}
             onClick={onNavigate}
+            aria-current={active ? "page" : undefined}
             className={`group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
               active
                 ? "bg-gradient-to-r from-amber-500/20 to-amber-500/5 text-amber-300 ring-1 ring-inset ring-amber-500/20"
@@ -101,6 +102,14 @@ export function Sidebar({ role }: { role: Role }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // Esc fecha o menu mobile.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMobileOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileOpen]);
+
   return (
     <>
       {/* Barra superior mobile */}
@@ -118,7 +127,7 @@ export function Sidebar({ role }: { role: Role }) {
       </div>
 
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="Menu">
           <div className="absolute inset-0 bg-black/70" onClick={() => setMobileOpen(false)} />
           <aside className="relative flex h-full w-64 flex-col border-r border-ink-700 bg-ink-900">
             <div className="flex h-16 items-center justify-between border-b border-ink-700 px-5">

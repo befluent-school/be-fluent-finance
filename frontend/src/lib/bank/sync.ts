@@ -87,19 +87,26 @@ export async function syncProvider(
   }
 
   // Janela de busca: da última data trazida (ou sync_window_days atrás) até hoje.
-  const windowStart = new Date(Date.now() - p.syncWindowDays * 86400_000).toISOString().slice(0, 10);
+  const windowStart = addDaysIso(today, -p.syncWindowDays);
   const since =
     sinceOverride ??
     (p.lastSyncedThrough && p.lastSyncedThrough > windowStart ? p.lastSyncedThrough : windowStart);
 
   const fetched: NormalizedTxn[] = [];
   let through: string | null = null;
+  // Erro no meio do histórico (ex.: limite de consultas do banco): os blocos
+  // já baixados são gravados mesmo assim e a próxima tentativa continua dali.
+  let partialError: string | null = null;
   for (let from = since; from <= today; from = addDaysIso(from, connector.maxRangeDays)) {
     const to = addDaysIso(from, connector.maxRangeDays - 1) < today ? addDaysIso(from, connector.maxRangeDays - 1) : today;
     const chunk = await connector.fetchTransactions(p.config ?? {}, credentials, from, to);
     if (!chunk.ok) {
-      await markProvider(tx, p.id, "erro", chunk.error.slice(0, 500), 0);
-      return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: chunk.error };
+      if (fetched.length === 0) {
+        await markProvider(tx, p.id, "erro", chunk.error.slice(0, 500), 0);
+        return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: chunk.error };
+      }
+      partialError = `Importação parcial: gravado até ${addDaysIso(from, -1)}. Para continuar, aguarde alguns minutos e importe a partir de ${from}. (${chunk.error})`;
+      break;
     }
     fetched.push(...chunk.transactions);
     if (chunk.through && (!through || chunk.through > through)) through = chunk.through;
@@ -141,6 +148,10 @@ export async function syncProvider(
 
   const imported = inserted.length;
   const skipped = rows.length - imported;
+  if (partialError) {
+    await markProvider(tx, p.id, "erro", partialError.slice(0, 500), imported, result.through);
+    return { ...base, ok: false, imported, skipped, through: result.through, error: partialError };
+  }
   await markProvider(tx, p.id, "ok", null, imported, result.through);
 
   return { ...base, ok: true, imported, skipped, through: result.through };
@@ -190,6 +201,7 @@ export async function syncAllActiveProviders(tx: Tx, today: string): Promise<Syn
 export async function afterSync(tx: Tx): Promise<void> {
   await reconcileTransfers(tx);
   await tx.execute(sql`select public.baixar_mensalidades_por_extrato()`);
+  await tx.execute(sql`select public.categorizar_lancamentos_bancarios()`);
 }
 
 /**
@@ -271,6 +283,8 @@ export async function reconcileTransfers(tx: Tx): Promise<void> {
     );
 }
 
+let backgroundSyncRunning = false;
+
 /**
  * Rede de segurança: sincroniza providers ativos no máximo uma vez a cada
  * ~6 h quando alguém abre o app. Mantém o fluxo "em tempo real" sem agendador,
@@ -278,6 +292,18 @@ export async function reconcileTransfers(tx: Tx): Promise<void> {
  * Não bloqueia a renderização e nunca lança.
  */
 export async function ensureBankSyncRecent(tx: Tx): Promise<void> {
+  // Cada página aberta chama esta função; sem a trava, várias abas/navegações
+  // disparavam syncs simultâneos e estouravam o limite de consultas do Inter (429).
+  if (backgroundSyncRunning) return;
+  backgroundSyncRunning = true;
+  try {
+    await runBackgroundSyncIfDue(tx);
+  } finally {
+    backgroundSyncRunning = false;
+  }
+}
+
+async function runBackgroundSyncIfDue(tx: Tx): Promise<void> {
   const [due] = await tx
     .select({ id: bankProviders.id })
     .from(bankProviders)
