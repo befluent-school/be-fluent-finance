@@ -5,10 +5,12 @@ import {
   saveProviderCredentials,
   testProviderConnection,
   syncProviderNow,
+  importProviderHistory,
   toggleProviderActive,
   deleteBankProvider,
   type ProviderFormState,
 } from "@/app/actions/bank-providers";
+import { todayBR } from "@/lib/dates";
 
 const inputClass =
   "mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-50 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500";
@@ -48,6 +50,7 @@ export function ProviderCard({ data }: { data: ProviderCardData }) {
   const [isPending, startTransition] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [historySince, setHistorySince] = useState(`${Number(todayBR().slice(0, 4)) - 1}${todayBR().slice(4, 7)}-01`);
 
   useEffect(() => {
     if (state?.success) formRef.current?.close();
@@ -114,6 +117,33 @@ export function ProviderCard({ data }: { data: ProviderCardData }) {
           <button onClick={() => setConfirmDel(true)} className="ml-auto rounded-md px-2 py-1 text-xs text-ink-500 hover:text-status-overdue">Excluir</button>
         )}
       </div>
+
+      {data.active && (
+        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-ink-700/60 pt-3">
+          <label className="text-xs text-ink-300">
+            Importar histórico desde
+            <input
+              type="date"
+              value={historySince}
+              onChange={(e) => setHistorySince(e.target.value)}
+              className="mt-1 block rounded-md border border-ink-700 bg-ink-950 px-2 py-1.5 text-xs text-ink-50 focus:border-amber-500 focus:outline-none"
+            />
+          </label>
+          <button
+            disabled={isPending || !historySince}
+            onClick={() =>
+              startTransition(async () => {
+                setMsg({ ok: true, text: "Importando… pode levar até um minuto." });
+                const r = await importProviderHistory(data.id, historySince);
+                setMsg({ ok: r.ok, text: r.message });
+              })
+            }
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-ink-200 ring-1 ring-inset ring-ink-700 hover:text-ink-50 disabled:opacity-60"
+          >
+            Importar histórico
+          </button>
+        </div>
+      )}
 
       {msg && <p className={`mt-3 text-sm ${msg.ok ? "text-status-paid" : "text-status-overdue"}`}>{msg.text}</p>}
       {state?.success && !msg && <p className="mt-3 text-sm text-status-paid">Credenciais salvas.</p>}

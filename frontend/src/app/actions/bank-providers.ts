@@ -157,10 +157,14 @@ export async function saveProviderCredentials(_state: ProviderFormState, formDat
         .where(eq(bankProviders.id, id));
 
       // Upsert da transação de abertura: remove a anterior (se houver) e insere nova.
-      if (openingBalance !== null && openingBalance > 0 && openingBalanceDate) {
+      // Saldo zero não gera lançamento (valor precisa ser > 0): a conta passa a
+      // usar a data de corte do primeiro saldo inicial das demais contas.
+      if (openingBalance !== null && openingBalance >= 0 && openingBalanceDate) {
         await tx
           .delete(cashTransactions)
           .where(and(eq(cashTransactions.bankProviderId, id), eq(cashTransactions.source, "opening")));
+      }
+      if (openingBalance !== null && openingBalance > 0 && openingBalanceDate) {
         await tx.insert(cashTransactions).values({
           date: openingBalanceDate,
           description: `Saldo inicial — ${p.label}`,
@@ -209,6 +213,33 @@ export async function testProviderConnection(id: string): Promise<{ ok: boolean;
   } catch (err) {
     logDbError("testProviderConnection", err);
     return { ok: false, message: "Erro ao testar a conexão." };
+  }
+}
+
+// ── Importar histórico ───────────────────────────────────────────────────────
+export async function importProviderHistory(id: string, since: string): Promise<{ ok: boolean; message: string }> {
+  const user = await getActionUser(POLICY);
+  if (!user) return { ok: false, message: FORBIDDEN_MESSAGE };
+  if (!z.uuid().safeParse(id).success) return { ok: false, message: "Conexão inválida." };
+  const today = todayBR();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || since < "2015-01-01" || since > today) {
+    return { ok: false, message: "Data inicial inválida." };
+  }
+
+  try {
+    const outcome = await withUser(user.id, async (tx) => {
+      const result = await syncProvider(tx, id, today, since);
+      await afterSync(tx);
+      return result;
+    });
+    for (const path of ["/banco/conexoes", "/fluxo-de-caixa", "/dashboard", "/impostos", "/relatorio-anual", "/mensalidades"]) {
+      revalidatePath(path);
+    }
+    if (!outcome.ok) return { ok: false, message: outcome.error ?? "Falha ao importar." };
+    return { ok: true, message: `Histórico importado: ${outcome.imported} nova(s), ${outcome.skipped} já existia(m).` };
+  } catch (err) {
+    logDbError("importProviderHistory", err);
+    return { ok: false, message: "Erro ao importar o histórico." };
   }
 }
 

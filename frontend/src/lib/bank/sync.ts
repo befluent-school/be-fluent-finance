@@ -31,6 +31,7 @@ export type SyncOutcome = {
 };
 
 const TRANSFER_CATEGORY = "Transferência entre Contas";
+const OWN_COMPANY_NAME = "BE FLUENT IDIOMAS E ENSINO";
 
 function dedupeKeyFor(t: NormalizedTxn, label: string): string {
   // Com id do banco: chave estável e única por transação.
@@ -44,7 +45,24 @@ function dedupeKeyFor(t: NormalizedTxn, label: string): string {
  * Sincroniza UM provider. Recebe a transação ativa do banco (tx) já com RLS do
  * usuário. Retorna o resultado; nunca lança (erros viram status 'erro').
  */
-export async function syncProvider(tx: Tx, providerId: string, today: string): Promise<SyncOutcome> {
+const CHUNK_DAYS = 30;
+
+function addDaysIso(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * `sinceOverride` busca a partir de uma data fixa (importação de histórico),
+ * em blocos de 30 dias — as APIs limitam o período por consulta.
+ */
+export async function syncProvider(
+  tx: Tx,
+  providerId: string,
+  today: string,
+  sinceOverride?: string
+): Promise<SyncOutcome> {
   const [p] = await tx.select().from(bankProviders).where(eq(bankProviders.id, providerId));
   if (!p) return { providerId, label: "?", ok: false, imported: 0, skipped: 0, through: null, error: "Provider não encontrado." };
 
@@ -70,13 +88,23 @@ export async function syncProvider(tx: Tx, providerId: string, today: string): P
 
   // Janela de busca: da última data trazida (ou sync_window_days atrás) até hoje.
   const windowStart = new Date(Date.now() - p.syncWindowDays * 86400_000).toISOString().slice(0, 10);
-  const since = p.lastSyncedThrough && p.lastSyncedThrough > windowStart ? p.lastSyncedThrough : windowStart;
+  const since =
+    sinceOverride ??
+    (p.lastSyncedThrough && p.lastSyncedThrough > windowStart ? p.lastSyncedThrough : windowStart);
 
-  const result = await connector.fetchTransactions(p.config ?? {}, credentials, since, today);
-  if (!result.ok) {
-    await markProvider(tx, p.id, "erro", result.error.slice(0, 500), 0);
-    return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: result.error };
+  const fetched: NormalizedTxn[] = [];
+  let through: string | null = null;
+  for (let from = since; from <= today; from = addDaysIso(from, CHUNK_DAYS)) {
+    const to = addDaysIso(from, CHUNK_DAYS - 1) < today ? addDaysIso(from, CHUNK_DAYS - 1) : today;
+    const chunk = await connector.fetchTransactions(p.config ?? {}, credentials, from, to);
+    if (!chunk.ok) {
+      await markProvider(tx, p.id, "erro", chunk.error.slice(0, 500), 0);
+      return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: chunk.error };
+    }
+    fetched.push(...chunk.transactions);
+    if (chunk.through && (!through || chunk.through > through)) through = chunk.through;
   }
+  const result = { transactions: fetched, through };
 
   const bankBalance = await connector.fetchBalance(p.config ?? {}, credentials);
   if (bankBalance !== null) {
@@ -133,7 +161,10 @@ async function markProvider(
       lastError: error,
       lastSyncedAt: sql`now()`,
       lastImportedCount: importedCount,
-      ...(through ? { lastSyncedThrough: through } : {}),
+      // Só avança: importar histórico antigo não pode recuar a janela do sync diário.
+      ...(through
+        ? { lastSyncedThrough: sql`greatest(coalesce(${bankProviders.lastSyncedThrough}, ${through}::date), ${through}::date)` }
+        : {}),
     })
     .where(eq(bankProviders.id, id));
 }
@@ -184,10 +215,16 @@ export async function reconcileTransfers(tx: Tx): Promise<void> {
       amount: cashTransactions.amount,
       type: cashTransactions.type,
       source: cashTransactions.source,
+      description: cashTransactions.description,
     })
     .from(cashTransactions)
     .where(and(isNull(cashTransactions.categoryId), inArray(cashTransactions.source, ["asaas", "inter", "api_sync"])))
     .orderBy(cashTransactions.date, cashTransactions.amount);
+
+  // Transferência real sempre cita a empresa em pelo menos uma das pernas; sem
+  // isso, uma mensalidade de R$ 240 coincidindo com um pagamento de R$ 240 na
+  // outra conta seria escondida do faturamento.
+  const own = (d: string) => d.toUpperCase().includes(OWN_COMPANY_NAME);
 
   const pool = [...uncategorized];
   const toUpdate: string[] = [];
@@ -202,7 +239,8 @@ export async function reconcileTransfers(tx: Tx): Promise<void> {
         b.date === a.date &&
         b.type === oppositeType &&
         b.source !== a.source &&
-        Math.abs(Number(b.amount) - Number(a.amount)) < 0.01
+        Math.abs(Number(b.amount) - Number(a.amount)) < 0.01 &&
+        (own(a.description) || own(b.description))
     );
     if (j !== -1) {
       toUpdate.push(a.id, pool[j]!.id);
@@ -212,12 +250,25 @@ export async function reconcileTransfers(tx: Tx): Promise<void> {
     }
   }
 
-  if (toUpdate.length === 0) return;
+  if (toUpdate.length > 0) {
+    await tx
+      .update(cashTransactions)
+      .set({ categoryId: transferCat.id })
+      .where(inArray(cashTransactions.id, toUpdate));
+  }
 
+  // Pix da/para a própria empresa vindo de conta não conectada (sem par):
+  // continua sendo movimentação entre contas, nunca receita ou despesa.
   await tx
     .update(cashTransactions)
     .set({ categoryId: transferCat.id })
-    .where(inArray(cashTransactions.id, toUpdate));
+    .where(
+      and(
+        isNull(cashTransactions.categoryId),
+        inArray(cashTransactions.source, ["asaas", "inter", "api_sync"]),
+        sql`${cashTransactions.description} ilike ${`%${OWN_COMPANY_NAME}%`}`
+      )
+    );
 }
 
 /**

@@ -20,11 +20,15 @@ describe("receita bruta do Simples", () => {
       await ins("2001-03-20", "saida", 200, "asaas", "Estorno - fatura 1");
       await ins("2001-03-20", "entrada", 26.2, "asaas", "Estorno da taxa de cartão - fatura 1");
       await ins("2001-04-10", "entrada", 300, "asaas", "Cobrança recebida - fatura 2");
+      // Antecipação em março, cobrança + baixa em abril: conta uma vez só (em março).
+      await ins("2001-03-25", "entrada", 100, "asaas", "Antecipação - fatura 3");
+      await ins("2001-04-12", "entrada", 100, "asaas", "Cobrança recebida - fatura 3");
+      await ins("2001-04-12", "saida", 100, "asaas", "Baixa da antecipação - fatura 3");
 
       const mes = async (m: string) =>
         (await c.query(`select * from public.v_receita_bruta_mensal where reference_month = $1`, [m])).rows[0];
       const marco = await mes("2001-03-01");
-      expect(Number(marco.receita_calculada)).toBe(300);
+      expect(Number(marco.receita_calculada)).toBe(400);
       expect(marco.coberto).toBe(false);
       expect((await mes("2001-04-01")).coberto).toBe(true);
 
