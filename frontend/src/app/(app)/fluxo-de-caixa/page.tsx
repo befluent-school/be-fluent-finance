@@ -10,6 +10,7 @@ import { MonthlyEvolutionChart } from "./monthly-evolution-chart";
 import { PeriodSelector } from "./period-selector";
 import { EvolutionRangeSelector } from "./evolution-range-selector";
 import { variation, VariationBadge } from "@/components/ui/variation-badge";
+import { ExportButton, type ExportRow } from "./export-button";
 
 type TransactionRow = {
   id: string;
@@ -208,10 +209,21 @@ export default async function FluxoDeCaixaPage({
     ? `${new Date(de! + "T00:00:00").toLocaleDateString("pt-BR")} — ${new Date(ate! + "T00:00:00").toLocaleDateString("pt-BR")}`
     : new Date(`${referenceMonth}-01`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
+  const exportRows: ExportRow[] = periodTransactions.map((t) => ({
+    date: t.date,
+    description: t.description,
+    category: t.cost_categories?.name ?? null,
+    source: t.source,
+    type: t.type,
+    amount: t.amount,
+    running_balance: t.running_balance,
+  }));
+
   return (
     <div>
+      {/* Linha 1: navegação de mês + novo lançamento */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {!usingCustomPeriod && (
             <>
               <Link
@@ -230,9 +242,13 @@ export default async function FluxoDeCaixaPage({
             </>
           )}
           {usingCustomPeriod && <p className="text-sm text-ink-300">{periodLabel}</p>}
-          <PeriodSelector />
         </div>
         <NewTransactionForm categories={categories} />
+      </div>
+
+      {/* Linha 2: seletor de período (sempre visível) */}
+      <div className="mt-3">
+        <PeriodSelector />
       </div>
 
       <div className="mt-4 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-xs text-ink-300">
@@ -310,7 +326,10 @@ export default async function FluxoDeCaixaPage({
         </table>
       </div>
 
-      <h2 className="mt-8 text-lg font-semibold text-ink-50">Lançamentos do período</h2>
+      <div className="mt-8 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-ink-50">Lançamentos do período</h2>
+        <ExportButton rows={exportRows} periodLabel={periodLabel} />
+      </div>
       <div className="mt-3 card-premium overflow-x-auto rounded-md">
         <table className="w-full text-left text-sm">
           <thead>
