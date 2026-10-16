@@ -81,6 +81,7 @@ async function callPage(
 
 export const asaasConnector: BankConnector = {
   provider: "asaas",
+  maxRangeDays: 90,
 
   async fetchTransactions(config, credentials, since, until): Promise<FetchResult> {
     const apiKey = str(credentials, "api_key");

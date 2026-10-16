@@ -32,7 +32,7 @@ const MAX_PAGES = 60;
 type TokenCacheEntry = { token: string; expiresAt: number };
 const tokenCache = new Map<string, TokenCacheEntry>();
 
-type HttpResponse = { status: number; body: string };
+type HttpResponse = { status: number; body: string; retryAfter: string | null };
 
 /** Faz uma requisição HTTPS com mTLS (cert+key do cliente). */
 function httpsRequest(
@@ -57,9 +57,14 @@ function httpsRequest(
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c) => chunks.push(c as Buffer));
-        res.on("end", () =>
-          resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") })
-        );
+        res.on("end", () => {
+          const ra = res.headers["retry-after"];
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+            retryAfter: typeof ra === "string" ? ra : null,
+          });
+        });
       }
     );
     req.on("error", reject);
@@ -67,6 +72,22 @@ function httpsRequest(
     if (options.body) req.write(options.body);
     req.end();
   });
+}
+
+const MAX_RATE_LIMIT_RETRIES = 3;
+
+/** O Inter responde 429 quando há consultas demais por minuto: espera e tenta de novo. */
+async function httpsRequestWithRetry(
+  urlStr: string,
+  options: Parameters<typeof httpsRequest>[1]
+): Promise<HttpResponse> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await httpsRequest(urlStr, options);
+    if (res.status !== 429 || attempt >= MAX_RATE_LIMIT_RETRIES) return res;
+    const seconds = Number(res.retryAfter);
+    const waitMs = Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 30) * 1000 : 20_000;
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
 }
 
 function cacheKey(clientId: string, cert: string): string {
@@ -97,7 +118,7 @@ async function getToken(config: ProviderConfig, credentials: ProviderCredentials
     scope,
   }).toString();
 
-  const res = await httpsRequest(`${hostBase(config)}${tokenPath}`, {
+  const res = await httpsRequestWithRetry(`${hostBase(config)}${tokenPath}`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     cert,
@@ -210,7 +231,7 @@ async function fetchExtrato(
     };
     if (conta) headers["x-conta-corrente"] = conta;
 
-    const res = await httpsRequest(url.toString(), { method: "GET", headers, cert, key });
+    const res = await httpsRequestWithRetry(url.toString(), { method: "GET", headers, cert, key });
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`Inter extrato ${res.status}: ${res.body.slice(0, 200)}`);
     }
@@ -229,6 +250,7 @@ async function fetchExtrato(
 
 export const interConnector: BankConnector = {
   provider: "inter",
+  maxRangeDays: 90,
 
   async fetchTransactions(config, credentials, since, until): Promise<FetchResult> {
     try {
@@ -249,7 +271,7 @@ export const interConnector: BankConnector = {
       const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: "application/json" };
       const conta = str(config, "conta_corrente");
       if (conta) headers["x-conta-corrente"] = conta;
-      const res = await httpsRequest(`${hostBase(config)}${str(config, "saldo_path", "/banking/v2/saldo")}`, {
+      const res = await httpsRequestWithRetry(`${hostBase(config)}${str(config, "saldo_path", "/banking/v2/saldo")}`, {
         method: "GET",
         headers,
         cert,

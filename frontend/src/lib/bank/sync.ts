@@ -45,7 +45,7 @@ function dedupeKeyFor(t: NormalizedTxn, label: string): string {
  * Sincroniza UM provider. Recebe a transação ativa do banco (tx) já com RLS do
  * usuário. Retorna o resultado; nunca lança (erros viram status 'erro').
  */
-const CHUNK_DAYS = 30;
+
 
 function addDaysIso(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`);
@@ -55,7 +55,7 @@ function addDaysIso(date: string, days: number): string {
 
 /**
  * `sinceOverride` busca a partir de uma data fixa (importação de histórico),
- * em blocos de 30 dias — as APIs limitam o período por consulta.
+ * em blocos do tamanho máximo que cada API aceita por consulta.
  */
 export async function syncProvider(
   tx: Tx,
@@ -94,8 +94,8 @@ export async function syncProvider(
 
   const fetched: NormalizedTxn[] = [];
   let through: string | null = null;
-  for (let from = since; from <= today; from = addDaysIso(from, CHUNK_DAYS)) {
-    const to = addDaysIso(from, CHUNK_DAYS - 1) < today ? addDaysIso(from, CHUNK_DAYS - 1) : today;
+  for (let from = since; from <= today; from = addDaysIso(from, connector.maxRangeDays)) {
+    const to = addDaysIso(from, connector.maxRangeDays - 1) < today ? addDaysIso(from, connector.maxRangeDays - 1) : today;
     const chunk = await connector.fetchTransactions(p.config ?? {}, credentials, from, to);
     if (!chunk.ok) {
       await markProvider(tx, p.id, "erro", chunk.error.slice(0, 500), 0);

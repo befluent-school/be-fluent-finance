@@ -35,6 +35,8 @@ export type ProviderCredentials = Record<string, string>;
 export interface BankConnector {
   /** Nome do provedor (igual ao enum de bank_providers.provider). */
   readonly provider: string;
+  /** Maior período (em dias) aceito por consulta; o histórico é buscado em blocos desse tamanho. */
+  readonly maxRangeDays: number;
   /** Busca transações entre `since` e `until` (inclusive), YYYY-MM-DD. */
   fetchTransactions(
     config: ProviderConfig,
