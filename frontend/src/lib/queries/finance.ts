@@ -17,38 +17,15 @@ export type SimplesApuracao = {
   effective_rate: number;
   receita_mes: number;
   das: number;
+  meses_faltantes: number;
+  receita_completa: boolean;
 };
 
-/** Apuração do Simples para um mês de competência (YYYY-MM-01). */
-export async function getSimplesApuracao(tx: Tx, referenceMonth: string): Promise<SimplesApuracao | null> {
-  const { rows } = await tx.execute<SimplesApuracao>(
-    sql`select reference_month::text, anexo, rbt12, faixa, nominal_rate, effective_rate, receita_mes, das
-        from public.simples_apuracao(${referenceMonth}::date)`
-  );
-  const r = rows[0];
-  return r
-    ? {
-        reference_month: r.reference_month,
-        anexo: r.anexo,
-        rbt12: Number(r.rbt12 ?? 0),
-        faixa: r.faixa == null ? null : Number(r.faixa),
-        nominal_rate: r.nominal_rate == null ? null : Number(r.nominal_rate),
-        effective_rate: Number(r.effective_rate ?? 0),
-        receita_mes: Number(r.receita_mes ?? 0),
-        das: Number(r.das ?? 0),
-      }
-    : null;
-}
+const APURACAO_COLUMNS = sql`reference_month::text, anexo, rbt12, faixa, nominal_rate, effective_rate,
+  receita_mes, das, meses_faltantes, receita_completa`;
 
-/** Histórico de apuração (todos os meses com receita), mais recente primeiro. */
-export async function getSimplesHistory(tx: Tx, limit = 13): Promise<SimplesApuracao[]> {
-  const { rows } = await tx.execute<SimplesApuracao>(
-    sql`select reference_month::text, anexo, rbt12, faixa, nominal_rate, effective_rate, receita_mes, das
-        from public.v_simples_apuracao
-        order by reference_month desc
-        limit ${limit}`
-  );
-  return rows.map((r) => ({
+function toApuracao(r: SimplesApuracao): SimplesApuracao {
+  return {
     reference_month: r.reference_month,
     anexo: r.anexo,
     rbt12: Number(r.rbt12 ?? 0),
@@ -57,6 +34,53 @@ export async function getSimplesHistory(tx: Tx, limit = 13): Promise<SimplesApur
     effective_rate: Number(r.effective_rate ?? 0),
     receita_mes: Number(r.receita_mes ?? 0),
     das: Number(r.das ?? 0),
+    meses_faltantes: Number(r.meses_faltantes ?? 0),
+    receita_completa: Boolean(r.receita_completa),
+  };
+}
+
+/** Apuração do Simples para um mês de competência (YYYY-MM-01). */
+export async function getSimplesApuracao(tx: Tx, referenceMonth: string): Promise<SimplesApuracao | null> {
+  const { rows } = await tx.execute<SimplesApuracao>(
+    sql`select ${APURACAO_COLUMNS} from public.simples_apuracao(${referenceMonth}::date)`
+  );
+  return rows[0] ? toApuracao(rows[0]) : null;
+}
+
+/** Histórico de apuração (todos os meses com receita), mais recente primeiro. */
+export async function getSimplesHistory(tx: Tx, limit = 13): Promise<SimplesApuracao[]> {
+  const { rows } = await tx.execute<SimplesApuracao>(
+    sql`select ${APURACAO_COLUMNS} from public.v_simples_apuracao
+        order by reference_month desc
+        limit ${limit}`
+  );
+  return rows.map(toApuracao);
+}
+
+export type ReceitaMensal = {
+  reference_month: string;
+  receita_calculada: number;
+  receita_informada: number | null;
+  coberto: boolean;
+};
+
+/** Receita por mês entre `from` (inclusive) e `to` (exclusive), com a origem de cada valor. */
+export async function getReceitaMensal(tx: Tx, from: string, to: string): Promise<ReceitaMensal[]> {
+  const { rows } = await tx.execute<{
+    reference_month: string;
+    receita_calculada: string;
+    receita_informada: string | null;
+    coberto: boolean;
+  }>(
+    sql`select reference_month::text, receita_calculada, receita_informada, coberto
+        from public.v_receita_bruta_mensal
+        where reference_month >= ${from}::date and reference_month < ${to}::date`
+  );
+  return rows.map((r) => ({
+    reference_month: r.reference_month,
+    receita_calculada: Number(r.receita_calculada),
+    receita_informada: r.receita_informada === null ? null : Number(r.receita_informada),
+    coberto: r.coberto,
   }));
 }
 

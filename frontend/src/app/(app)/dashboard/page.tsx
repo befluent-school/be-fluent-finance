@@ -50,7 +50,10 @@ export default async function DashboardPage({
   taskAlertThreshold.setDate(taskAlertThreshold.getDate() + 3);
   const taskAlertThresholdStr = taskAlertThreshold.toISOString().slice(0, 10);
 
-  const notTransfer = or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME));
+  const notTransfer = and(
+    or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME)),
+    ne(cashTransactions.source, "opening")
+  );
 
   const {
     mrr,
@@ -112,14 +115,13 @@ export default async function DashboardPage({
             notTransfer
           )
         ),
-      () => // Saldo total: todo o histórico de cash_transactions, () => sem filtro de mês
-      // — sempre reflete o momento atual, () => não o mês selecionado. Somado no
-      // banco (o PostgREST cortava em 1000 linhas e o saldo ficava errado).
-      tx
-        .select({
-          total: sql<number>`coalesce(sum(case when ${cashTransactions.type} = 'entrada' then ${cashTransactions.amount} else -${cashTransactions.amount} end), 0)`.mapWith(Number),
-        })
-        .from(cashTransactions),
+      // Saldo total de hoje: mesmo cálculo do Fluxo de Caixa (ancorado no saldo inicial).
+      async () => {
+        const { rows } = await tx.execute<{ total: string }>(sql`
+          select running_balance as total from public.cash_transactions_with_balance
+           where in_balance order by seq desc limit 1`);
+        return rows.map((row) => ({ total: Number(row.total) }));
+      },
       () => // A receber: mensalidades pagas com cartão no mês selecionado — o
       // dinheiro só conta como "caixa disponível" quando confirmado num
       // extrato importado (categoria "Mensalidade de Aluno"), () => não estimamos prazo.

@@ -40,7 +40,8 @@ async function monthTotals(tx: Tx, year: string): Promise<MonthTotal[]> {
       and(
         gte(cashTransactions.date, `${year}-01-01`),
         lt(cashTransactions.date, `${Number(year) + 1}-01-01`),
-        or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME))
+        or(isNull(costCategories.name), ne(costCategories.name, TRANSFER_CATEGORY_NAME)),
+        ne(cashTransactions.source, "opening")
       )
     )
     .groupBy(sql`1`, cashTransactions.type);

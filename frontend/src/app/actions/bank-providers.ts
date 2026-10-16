@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import * as z from "zod";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { withUser } from "@/lib/db";
 import { bankProviders, cashTransactions } from "@/lib/db/schema";
 import { logDbError } from "@/lib/db/errors";
