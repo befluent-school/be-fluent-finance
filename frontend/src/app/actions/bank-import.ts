@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import * as z from "zod";
 import { inArray } from "drizzle-orm";
 import { withUser } from "@/lib/db";
-import { cashTransactions } from "@/lib/db/schema";
+import { bankProviders, cashTransactions } from "@/lib/db/schema";
 import { logDbError } from "@/lib/db/errors";
 import { FORBIDDEN_MESSAGE, getActionUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
@@ -196,6 +196,8 @@ export async function confirmBankImport(
     return { success: false, error: "Dados do extrato inválidos. Revise as linhas e tente novamente." };
   }
 
+  const label = parsed.data.accountLabel;
+  const norm = (v: string) => v.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   const cashRows = parsed.data.rows.map((r) => ({
     date: r.date,
     description: `${r.description} (${parsed.data.accountLabel})`,
@@ -207,13 +209,21 @@ export async function confirmBankImport(
   }));
 
   try {
-    const inserted = await withUser(user.id, (tx) =>
-      tx
+    const inserted = await withUser(user.id, async (tx) => {
+      // Extrato de uma conta conectada (ex.: "Banco Inter"): liga os lançamentos
+      // a ela, para entrarem no saldo e na conferência daquela conta.
+      const providers = await tx
+        .select({ id: bankProviders.id, label: bankProviders.label, provider: bankProviders.provider })
+        .from(bankProviders);
+      const match = providers.find(
+        (p) => norm(label).includes(norm(p.provider)) || norm(p.label).includes(norm(label)) || norm(label).includes(norm(p.label))
+      );
+      return tx
         .insert(cashTransactions)
-        .values(cashRows)
+        .values(cashRows.map((row) => ({ ...row, bankProviderId: match?.id ?? null })))
         .onConflictDoNothing({ target: cashTransactions.dedupeKey })
-        .returning({ id: cashTransactions.id })
-    );
+        .returning({ id: cashTransactions.id });
+    });
 
     revalidatePath("/fluxo-de-caixa");
     revalidatePath("/dashboard");
