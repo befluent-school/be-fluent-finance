@@ -361,6 +361,8 @@ export const bankProviders = pgTable("bank_providers", {
   lastImportedCount: integer("last_imported_count").notNull().default(0),
   openingBalance: numeric("opening_balance", { precision: 12, scale: 2, mode: "number" }),
   openingBalanceDate: day("opening_balance_date"),
+  bankBalance: numeric("bank_balance", { precision: 12, scale: 2, mode: "number" }),
+  bankBalanceAt: ts("bank_balance_at"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });

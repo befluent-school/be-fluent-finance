@@ -77,48 +77,32 @@ export async function syncProvider(tx: Tx, providerId: string, today: string): P
     return { ...base, ok: false, imported: 0, skipped: 0, through: null, error: result.error };
   }
 
+  const bankBalance = await connector.fetchBalance(p.config ?? {}, credentials);
+  if (bankBalance !== null) {
+    await tx
+      .update(bankProviders)
+      .set({ bankBalance, bankBalanceAt: sql`now()` })
+      .where(eq(bankProviders.id, p.id));
+  }
+
   const txns = result.transactions;
   if (txns.length === 0) {
     await markProvider(tx, p.id, "ok", null, 0, result.through);
     return { ...base, ok: true, imported: 0, skipped: 0, through: result.through };
   }
 
-  // Categoria de transferência (para marcar repasses entre contas próprias).
-  const [transferCat] = await tx
-    .select({ id: costCategories.id })
-    .from(costCategories)
-    .where(eq(costCategories.name, TRANSFER_CATEGORY));
-
-  // Detecta transferências entre contas próprias: para cada transação, procura
-  // em cash_transactions já lançadas uma de tipo oposto, mesma data e valor.
-  const dates = Array.from(new Set(txns.map((t) => t.date)));
-  const existing = await tx
-    .select({ date: cashTransactions.date, amount: cashTransactions.amount, type: cashTransactions.type })
-    .from(cashTransactions)
-    .where(inArray(cashTransactions.date, dates));
-  const pool = [...existing];
-
-  const rows = txns.map((t) => {
-    let categoryId: string | null = null;
-    const oppositeType = t.type === "entrada" ? "saida" : "entrada";
-    const idx = pool.findIndex(
-      (e) => e.date === t.date && e.type === oppositeType && Math.abs(e.amount - t.amount) < 0.01
-    );
-    if (idx !== -1 && transferCat) {
-      categoryId = transferCat.id;
-      pool.splice(idx, 1);
-    }
-    return {
-      date: t.date,
-      description: `${t.description} (${p.label})`,
-      amount: t.amount,
-      type: t.type,
-      categoryId,
-      source: p.provider === "asaas" ? ("asaas" as const) : p.provider === "inter" ? ("inter" as const) : ("api_sync" as const),
-      bankProviderId: p.id,
-      dedupeKey: dedupeKeyFor(t, p.label),
-    };
-  });
+  // Transferências entre contas próprias são marcadas depois, por
+  // reconcileTransfers, quando as duas pernas já estão no banco.
+  const rows = txns.map((t) => ({
+    date: t.date,
+    description: `${t.description} (${p.label})`,
+    amount: t.amount,
+    type: t.type,
+    categoryId: null,
+    source: p.provider === "asaas" ? ("asaas" as const) : p.provider === "inter" ? ("inter" as const) : ("api_sync" as const),
+    bankProviderId: p.id,
+    dedupeKey: dedupeKeyFor(t, p.label),
+  }));
 
   const inserted = await tx
     .insert(cashTransactions)

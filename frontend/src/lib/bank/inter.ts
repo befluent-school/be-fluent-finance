@@ -240,6 +240,29 @@ export const interConnector: BankConnector = {
     }
   },
 
+  async fetchBalance(config, credentials): Promise<number | null> {
+    const cert = str(credentials, "certificate");
+    const key = str(credentials, "private_key");
+    if (!cert || !key) return null;
+    try {
+      const token = await getToken(config, credentials);
+      const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: "application/json" };
+      const conta = str(config, "conta_corrente");
+      if (conta) headers["x-conta-corrente"] = conta;
+      const res = await httpsRequest(`${hostBase(config)}${str(config, "saldo_path", "/banking/v2/saldo")}`, {
+        method: "GET",
+        headers,
+        cert,
+        key,
+      });
+      if (res.status < 200 || res.status >= 300) return null;
+      const json = JSON.parse(res.body) as { disponivel?: unknown };
+      return typeof json.disponivel === "number" ? json.disponivel : null;
+    } catch {
+      return null;
+    }
+  },
+
   async testConnection(config, credentials): Promise<FetchResult> {
     if (
       !str(credentials, "certificate") ||

@@ -19,8 +19,12 @@ describe("sincronização ASAAS → cash_transactions (ponta a ponta)", () => {
 
   beforeAll(async () => {
     owner = await ensureUser("rls-owner@teste.local", "owner");
-    server = createServer((_req, res) => {
+    server = createServer((req, res) => {
       res.setHeader("content-type", "application/json");
+      if (req.url?.startsWith("/finance/balance")) {
+        res.end(JSON.stringify({ balance: 1234.56 }));
+        return;
+      }
       res.end(JSON.stringify({
         hasMore: false,
         data: [
@@ -68,7 +72,8 @@ describe("sincronização ASAAS → cash_transactions (ponta a ponta)", () => {
     expect(r2.skipped).toBe(2);
 
     // provider marcado ok.
-    const prov = await ownerPool.query("select last_status, last_imported_count from public.bank_providers where id = $1", [providerId]);
+    const prov = await ownerPool.query("select last_status, last_imported_count, bank_balance from public.bank_providers where id = $1", [providerId]);
     expect(prov.rows[0].last_status).toBe("ok");
+    expect(Number(prov.rows[0].bank_balance)).toBe(1234.56);
   });
 });

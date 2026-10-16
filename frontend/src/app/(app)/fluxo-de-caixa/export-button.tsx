@@ -7,7 +7,7 @@ export type ExportRow = {
   source: string;
   type: "entrada" | "saida";
   amount: number;
-  running_balance: number;
+  running_balance: number | null;
 };
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -37,7 +37,7 @@ export function ExportButton({ rows, periodLabel }: { rows: ExportRow[]; periodL
       SOURCE_LABEL[r.source] ?? r.source,
       r.type === "entrada" ? "Entrada" : "Saída",
       r.amount.toFixed(2).replace(".", ","),
-      r.running_balance.toFixed(2).replace(".", ","),
+      r.running_balance === null ? "" : r.running_balance.toFixed(2).replace(".", ","),
     ].map(escCsv).join(";"));
 
     const bom = "﻿"; // BOM para Excel abrir UTF-8 corretamente

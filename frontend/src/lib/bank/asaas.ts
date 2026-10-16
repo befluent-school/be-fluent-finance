@@ -108,6 +108,22 @@ export const asaasConnector: BankConnector = {
     }
   },
 
+  async fetchBalance(config, credentials): Promise<number | null> {
+    const apiKey = str(credentials, "api_key");
+    if (!apiKey) return null;
+    try {
+      const res = await fetch(`${baseUrl(config)}/finance/balance`, {
+        headers: { access_token: apiKey, "User-Agent": "BeFluentFinance/1.0", Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      const json = (await res.json()) as { balance?: unknown };
+      return typeof json.balance === "number" ? json.balance : null;
+    } catch {
+      return null;
+    }
+  },
+
   async testConnection(config, credentials): Promise<FetchResult> {
     const apiKey = str(credentials, "api_key");
     if (!apiKey) return { ok: false, error: "API key do ASAAS não configurada." };

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { and, asc, eq, gte, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
 import { withUser, sequential } from "@/lib/db";
-import { cashTransactions, costCategories } from "@/lib/db/schema";
+import { bankProviders, cashTransactions, costCategories } from "@/lib/db/schema";
 import { parseIsoDate, parseYearMonth } from "@/lib/validation";
 import { formatCurrencyBRL } from "@shared/finance";
 import { NewTransactionForm } from "./new-transaction-form";
@@ -20,7 +20,7 @@ type TransactionRow = {
   amount: number;
   type: "entrada" | "saida";
   payment_method: string | null;
-  running_balance: number;
+  running_balance: number | null;
   source: string;
   cost_categories: { name: string } | null;
 };
@@ -112,17 +112,32 @@ export default async function FluxoDeCaixaPage({
     ne(cashTransactions.source, "opening"),
   );
 
-  const { periodTransactions, categories, yearTransactions, previousTotals } = await withUser(user.id, async (tx) => {
-    const [period, categories, evolution, previous] = await sequential([
-      () => // O saldo acumulado vem da view (janela sobre TODO o histórico); o filtro
-      // de período é aplicado depois, () => então o saldo de cada linha é o real.
-      tx.execute<TransactionRow & { category_name: string | null }>(sql`
-        select v.id, v.date, v.created_at, v.description, v.category_id, v.amount, v.type,
+  const {
+    periodTransactions,
+    categories,
+    yearTransactions,
+    previousTotals,
+    balanceAtEnd,
+    balanceAtStart,
+    providers,
+    computedByProvider,
+  } = await withUser(user.id, async (tx) => {
+    const balanceBefore = (date: string) =>
+      tx.execute<{ running_balance: string }>(sql`
+        select running_balance from public.cash_transactions_with_balance
+         where in_balance and date < ${date}::date
+         order by seq desc limit 1`);
+
+    const [period, categories, evolution, previous, endRow, startRow, providers, computed] = await sequential([
+      // Saldo vem da view (janela sobre todo o histórico); a tela lista na
+      // mesma ordem do cálculo (seq) para cada linha bater com a anterior.
+      () => tx.execute<TransactionRow & { category_name: string | null }>(sql`
+        select v.id, v.date, v.description, v.category_id, v.amount, v.type,
                v.payment_method, v.running_balance, v.source, cc.name as category_name
           from public.cash_transactions_with_balance v
           left join public.cost_categories cc on cc.id = v.category_id
          where v.date >= ${periodStart}::date and v.date < ${periodEnd}::date
-         order by v.date desc, v.created_at desc`),
+         order by v.seq desc`),
       () => tx
         .select({ id: costCategories.id, name: costCategories.name, type: costCategories.type })
         .from(costCategories)
@@ -147,12 +162,37 @@ export default async function FluxoDeCaixaPage({
         .leftJoin(costCategories, eq(costCategories.id, cashTransactions.categoryId))
         .where(and(gte(cashTransactions.date, previousPeriodStart), lt(cashTransactions.date, previousPeriodEnd), notTransfer))
         .groupBy(cashTransactions.type),
+      () => balanceBefore(periodEnd),
+      () => balanceBefore(periodStart),
+      // RLS: só owner/sócio enxergam as contas — os demais não veem a conferência.
+      () => tx
+        .select({
+          id: bankProviders.id,
+          label: bankProviders.label,
+          bankBalance: bankProviders.bankBalance,
+          bankBalanceAt: bankProviders.bankBalanceAt,
+        })
+        .from(bankProviders)
+        .where(eq(bankProviders.active, true))
+        .orderBy(asc(bankProviders.label)),
+      () => tx.execute<{ bank_provider_id: string; saldo: string }>(sql`
+        select bank_provider_id,
+               sum(case when type = 'entrada' then amount else -amount end) as saldo
+          from public.cash_transactions_with_balance
+         where in_balance and bank_provider_id is not null
+         group by bank_provider_id`),
     ]);
 
     const previousTotals = { entrada: 0, saida: 0 };
     for (const row of previous) previousTotals[row.type] = row.total;
 
+    const toNumber = (r: { running_balance: string } | undefined) => (r ? Number(r.running_balance) : 0);
+
     return {
+      balanceAtEnd: toNumber(endRow.rows[0]),
+      balanceAtStart: toNumber(startRow.rows[0]),
+      providers,
+      computedByProvider: new Map(computed.rows.map((r) => [r.bank_provider_id, Number(r.saldo)])),
       periodTransactions: period.rows.map(
         (r): TransactionRow => ({
           id: r.id,
@@ -162,7 +202,7 @@ export default async function FluxoDeCaixaPage({
           amount: Number(r.amount),
           type: r.type,
           payment_method: r.payment_method,
-          running_balance: Number(r.running_balance),
+          running_balance: r.running_balance === null ? null : Number(r.running_balance),
           source: r.source,
           cost_categories: r.category_name ? { name: r.category_name } : null,
         })
@@ -185,11 +225,15 @@ export default async function FluxoDeCaixaPage({
     { entrada: 0, saida: 0 }
   );
 
-  // running_balance da view já inclui transferências (é um saldo bancário
-  // real, não um "resultado do negócio") — mantido como está, só os totais
-  // de entrada/saída do card e o resumo por categoria excluem transferências.
-  const currentBalance = periodTransactions[0]?.running_balance ?? 0;
-  const previousBalance = currentBalance - totals.entrada + totals.saida;
+  const currentBalance = balanceAtEnd;
+  const previousBalance = balanceAtStart;
+
+  const reconciliation = providers.map((p) => {
+    const computed = computedByProvider.get(p.id) ?? null;
+    const diff = p.bankBalance !== null && computed !== null ? computed - p.bankBalance : null;
+    return { ...p, computed, diff };
+  });
+  const showReconciliation = reconciliation.some((r) => r.bankBalance !== null);
 
   const monthlyTotals = evolutionMonthsList.map((month) => ({
     month,
@@ -281,6 +325,63 @@ export default async function FluxoDeCaixaPage({
         </div>
       </div>
 
+      {showReconciliation && (
+        <div className="mt-4 rounded-md border border-ink-700 bg-ink-800/40 p-4">
+          <p className="text-sm font-medium text-ink-50">Conferência com os bancos (saldo de hoje)</p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="text-xs text-ink-300">
+                  <th className="py-1 pr-4 font-medium">Conta</th>
+                  <th className="py-1 pr-4 font-medium">Saldo no banco</th>
+                  <th className="py-1 pr-4 font-medium">Saldo no sistema</th>
+                  <th className="py-1 font-medium">Diferença</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reconciliation.map((r) => (
+                  <tr key={r.id}>
+                    <td className="py-1 pr-4 text-ink-50">{r.label}</td>
+                    <td className="font-tabular py-1 pr-4">
+                      {r.bankBalance === null ? "—" : formatCurrencyBRL(r.bankBalance)}
+                      {r.bankBalanceAt && (
+                        <span className="ml-2 text-xs text-ink-500">
+                          {new Date(r.bankBalanceAt).toLocaleString("pt-BR", {
+                            timeZone: "America/Sao_Paulo",
+                            day: "2-digit",
+                            month: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      )}
+                    </td>
+                    <td className="font-tabular py-1 pr-4">
+                      {r.computed === null ? "—" : formatCurrencyBRL(r.computed)}
+                    </td>
+                    <td
+                      className={`font-tabular py-1 ${
+                        r.diff === null
+                          ? "text-ink-500"
+                          : Math.abs(r.diff) < 0.01
+                            ? "text-status-paid"
+                            : "text-status-overdue"
+                      }`}
+                    >
+                      {r.diff === null ? "—" : Math.abs(r.diff) < 0.01 ? "Confere" : formatCurrencyBRL(r.diff)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-ink-500">
+            Diferença diferente de zero indica lançamento faltando ou a mais no sistema, ou saldo inicial
+            informado incorretamente em Conexões Bancárias.
+          </p>
+        </div>
+      )}
+
       <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-lg font-semibold text-ink-50">
           Evolução (
@@ -366,7 +467,12 @@ export default async function FluxoDeCaixaPage({
                 >
                   {t.type === "entrada" ? "+" : "-"} {formatCurrencyBRL(t.amount)}
                 </td>
-                <td className="font-tabular px-4 py-3">{formatCurrencyBRL(t.running_balance)}</td>
+                <td
+                  className="font-tabular px-4 py-3"
+                  title={t.running_balance === null ? "Anterior ao saldo inicial: já está contido nele" : undefined}
+                >
+                  {t.running_balance === null ? "—" : formatCurrencyBRL(t.running_balance)}
+                </td>
                 <td className="px-4 py-3">
                   <NewTransactionForm
                     categories={categories}

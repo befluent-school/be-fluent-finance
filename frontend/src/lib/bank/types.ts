@@ -44,6 +44,8 @@ export interface BankConnector {
   ): Promise<FetchResult>;
   /** Testa a conexão/credenciais sem necessariamente trazer dados. */
   testConnection(config: ProviderConfig, credentials: ProviderCredentials): Promise<FetchResult>;
+  /** Saldo atual da conta segundo o próprio banco (null se indisponível). */
+  fetchBalance(config: ProviderConfig, credentials: ProviderCredentials): Promise<number | null>;
 }
 
 /** Helper: lê string de um config/credentials com fallback. */
