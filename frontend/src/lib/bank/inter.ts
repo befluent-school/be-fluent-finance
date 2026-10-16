@@ -132,8 +132,8 @@ function normalize(t: Record<string, unknown>): NormalizedTxn | null {
   if (!date || !Number.isFinite(rawValue)) return null;
 
   const tipo = String(t.tipoTransacao ?? t.tipoOperacao ?? t.tipo ?? "").toUpperCase();
-  const titulo = typeof t.titulo === "string" ? t.titulo.toUpperCase() : "";
-  const descricaoUp = typeof t.descricao === "string" ? t.descricao.toUpperCase() : "";
+  const titulo = typeof t.titulo === "string" ? t.titulo : "";
+  const descricao = typeof t.descricao === "string" ? t.descricao : "";
 
   // API do Inter: tipoTransacao pode ser D (débito) ou C (crédito) — caminho ideal.
   // Fallback: título contém "PIX ENVIADO", "PAGAMENTO" etc = débito/saída.
@@ -141,19 +141,18 @@ function normalize(t: Record<string, unknown>): NormalizedTxn | null {
   // Último recurso: valor negativo = saída.
   const debitKeywords = ["PIX ENVIADO", "PAGAMENTO", "TRANSFERENCIA ENVIADA", "SAQUE", "TARIFA", "IOF", "DEBITO"];
   const creditKeywords = ["PIX RECEBIDO", "RECEBIMENTO", "CREDITO", "DEPOSITO", "TRANSFERENCIA RECEBIDA"];
+  const tituloUp = titulo.toUpperCase();
+  const descricaoUp = descricao.toUpperCase();
 
   const isDebitByType = tipo.startsWith("D") || tipo === "DEBIT";
   const isCreditByType = tipo.startsWith("C") || tipo === "CREDIT";
-  const isDebitByKeyword = !isCreditByType && debitKeywords.some((k) => titulo.includes(k) || descricaoUp.includes(k));
-  const isCreditByKeyword = !isDebitByType && creditKeywords.some((k) => titulo.includes(k) || descricaoUp.includes(k));
+  const isDebitByKeyword = !isCreditByType && debitKeywords.some((k) => tituloUp.includes(k) || descricaoUp.includes(k));
+  const isCreditByKeyword = !isDebitByType && creditKeywords.some((k) => tituloUp.includes(k) || descricaoUp.includes(k));
 
   const type: "entrada" | "saida" =
     isDebitByType || isDebitByKeyword ? "saida" :
     isCreditByType || isCreditByKeyword ? "entrada" :
     rawValue < 0 ? "saida" : "entrada";
-
-  const titulo = typeof t.titulo === "string" ? t.titulo : "";
-  const descricao = typeof t.descricao === "string" ? t.descricao : "";
   const detalhe = [titulo, descricao].filter(Boolean).join(" — ") || "Movimentação Inter";
 
   const amount = Math.round(Math.abs(rawValue) * 100) / 100;
