@@ -1,3 +1,4 @@
+import { todayBR } from "@/lib/dates";
 import Link from "next/link";
 import { formatCurrencyBRL } from "@shared/finance";
 import { requireUser } from "@/lib/auth/session";
@@ -31,7 +32,7 @@ export default async function ProfessoresPage({
   const canManage = Policies.ownerOrSocio.check(user);
 
   const { mes } = await searchParams;
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = todayBR().slice(0, 7);
   const selectedMonth = parseYearMonth(mes, currentMonth);
   const referenceMonth = `${selectedMonth}-01`;
 

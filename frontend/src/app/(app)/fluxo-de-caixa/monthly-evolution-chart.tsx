@@ -1,3 +1,4 @@
+import { formatMonthBR } from "@/lib/dates";
 import { formatCurrencyBRL } from "@shared/finance";
 
 type MonthTotal = { month: string; entrada: number; saida: number };
@@ -22,7 +23,7 @@ export function MonthlyEvolutionChart({ data }: { data: MonthTotal[] }) {
             />
           </div>
           <span className="text-xs text-ink-300">
-            {new Date(`${month.month}-01`).toLocaleDateString("pt-BR", { month: "short" })}
+            {formatMonthBR(month.month, "short")}
           </span>
         </div>
       ))}

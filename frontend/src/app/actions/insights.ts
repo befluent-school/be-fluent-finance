@@ -1,5 +1,6 @@
 "use server";
 
+import { todayBR } from "@/lib/dates";
 import { withUser, sequential } from "@/lib/db";
 import { getActionUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
@@ -27,8 +28,8 @@ export async function getFinancialInsights(): Promise<InsightsResult> {
     return { error: "not_configured" };
   }
 
-  const referenceMonth = new Date().toISOString().slice(0, 7) + "-01";
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const referenceMonth = todayBR().slice(0, 7) + "-01";
+  const todayStr = todayBR();
 
   const data = await withUser(user.id, async (tx) => {
     const [mrr, cacData, inadimplencia, targets, overdueTasks, activeStudents] = await sequential([

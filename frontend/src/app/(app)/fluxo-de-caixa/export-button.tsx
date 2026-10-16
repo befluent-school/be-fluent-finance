@@ -1,5 +1,7 @@
 "use client";
 
+import { formatDateBR } from "@/lib/dates";
+
 export type ExportRow = {
   date: string;
   description: string;
@@ -31,7 +33,7 @@ export function ExportButton({ rows, periodLabel }: { rows: ExportRow[]; periodL
   function download() {
     const header = ["Data", "Descrição", "Categoria", "Origem", "Tipo", "Valor (R$)", "Saldo acumulado (R$)"];
     const lines = rows.map((r) => [
-      new Date(r.date + "T00:00:00").toLocaleDateString("pt-BR"),
+      formatDateBR(r.date),
       r.description,
       r.category ?? "",
       SOURCE_LABEL[r.source] ?? r.source,
@@ -63,3 +65,4 @@ export function ExportButton({ rows, periodLabel }: { rows: ExportRow[]; periodL
     </button>
   );
 }
+

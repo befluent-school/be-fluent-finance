@@ -1,4 +1,5 @@
 import "server-only";
+import { todayBR } from "@/lib/dates";
 import type { BankConnector, FetchResult, NormalizedTxn, ProviderConfig } from "./types";
 import { str, bool } from "./types";
 
@@ -129,7 +130,7 @@ export const asaasConnector: BankConnector = {
     if (!apiKey) return { ok: false, error: "API key do ASAAS não configurada." };
     try {
       // Busca a 1ª página de uma janela curta só para validar a credencial.
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayBR();
       const monthAgo = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
       await callPage(config, apiKey, monthAgo, today, 0);
       return { ok: true, transactions: [], through: null };

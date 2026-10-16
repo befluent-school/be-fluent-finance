@@ -1,5 +1,6 @@
 "use server";
 
+import { todayBR } from "@/lib/dates";
 import { revalidatePath } from "next/cache";
 import * as z from "zod";
 import { and, eq } from "drizzle-orm";
@@ -11,7 +12,7 @@ import { Policies } from "@/lib/auth/policies";
 import { encryptCredentials, decryptCredentials } from "@/lib/bank/credentials";
 import { asaasConnector } from "@/lib/bank/asaas";
 import { interConnector } from "@/lib/bank/inter";
-import { syncProvider, reconcileTransfers } from "@/lib/bank/sync";
+import { syncProvider, afterSync } from "@/lib/bank/sync";
 import type { BankConnector } from "@/lib/bank/types";
 
 // Conexões bancárias são dado sensível: owner/socio (mesmo RLS da tabela).
@@ -218,16 +219,17 @@ export async function syncProviderNow(id: string): Promise<{ ok: boolean; messag
   if (!z.uuid().safeParse(id).success) return { ok: false, message: "Conexão inválida." };
 
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayBR();
     const outcome = await withUser(user.id, async (tx) => {
       const result = await syncProvider(tx, id, today);
-      await reconcileTransfers(tx);
+      await afterSync(tx);
       return result;
     });
     revalidatePath("/banco/conexoes");
     revalidatePath("/fluxo-de-caixa");
     revalidatePath("/dashboard");
     revalidatePath("/contas");
+    revalidatePath("/mensalidades");
     if (!outcome.ok) return { ok: false, message: outcome.error ?? "Falha na sincronização." };
     return {
       ok: true,

@@ -1,5 +1,6 @@
 "use client";
 
+import { todayBR } from "@/lib/dates";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { createRecurringPayable, type RecurringState } from "@/app/actions/recurring-payables";
 
@@ -9,7 +10,7 @@ const inputClass =
 export function RecurringForm({ categories }: { categories: { id: string; name: string }[] }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [state, action, pending] = useActionState<RecurringState, FormData>(createRecurringPayable, undefined);
-  const thisMonth = new Date().toISOString().slice(0, 7);
+  const thisMonth = todayBR().slice(0, 7);
   const [startMonth, setStartMonth] = useState(thisMonth);
 
   useEffect(() => {

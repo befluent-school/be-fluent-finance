@@ -1,3 +1,4 @@
+import { formatDateBR } from "@/lib/dates";
 import Link from "next/link";
 import { and, asc, count, desc, eq, gte, lte, type SQL } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
@@ -158,7 +159,7 @@ export default async function ConciliacaoPage({
             {transactions?.map((t) => (
               <tr key={t.id} className="border-b border-ink-700/70 last:border-0 hover:bg-white/[0.03]">
                 <td className="font-tabular px-4 py-3">
-                  {new Date(t.date).toLocaleDateString("pt-BR")}
+                  {formatDateBR(t.date)}
                 </td>
                 <td className="px-4 py-3">{t.description}</td>
                 <td className="px-4 py-3 text-ink-300">{t.cost_categories?.name ?? "—"}</td>

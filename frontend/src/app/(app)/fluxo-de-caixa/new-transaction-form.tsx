@@ -1,5 +1,6 @@
 "use client";
 
+import { todayBR } from "@/lib/dates";
 import { useActionState, useEffect, useRef, useState } from "react";
 import {
   createCashTransaction,
@@ -105,7 +106,7 @@ export function NewTransactionForm({
                 name="date"
                 type="date"
                 required
-                defaultValue={transaction?.date ?? new Date().toISOString().slice(0, 10)}
+                defaultValue={transaction?.date ?? todayBR()}
                 className={inputClass}
               />
             </div>

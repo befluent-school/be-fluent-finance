@@ -1,3 +1,4 @@
+import { todayBR, formatMonthBR } from "@/lib/dates";
 import Link from "next/link";
 import { formatCurrencyBRL } from "@shared/finance";
 import { requireUser } from "@/lib/auth/session";
@@ -43,7 +44,7 @@ export default async function ImpostosPage({
 
   const { mes } = await searchParams;
   // Competência padrão: mês fechado (anterior ao atual), que é o que se apura.
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = todayBR().slice(0, 7);
   const defaultCompetencia = addMonths(currentMonth, -1);
   const selectedMonth = parseYearMonth(mes, defaultCompetencia);
   const referenceMonth = `${selectedMonth}-01`;
@@ -92,7 +93,7 @@ export default async function ImpostosPage({
         <div className="flex items-center gap-3">
           <Link href={`/impostos?mes=${addMonths(selectedMonth, -1)}`} className="rounded-md px-2 py-1 text-sm text-ink-300 hover:bg-white/[0.05] hover:text-ink-50">‹</Link>
           <p className="text-sm capitalize text-ink-300">
-            Competência {new Date(referenceMonth).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}
+            Competência {formatMonthBR(referenceMonth)}
           </p>
           <Link href={`/impostos?mes=${addMonths(selectedMonth, 1)}`} className="rounded-md px-2 py-1 text-sm text-ink-300 hover:bg-white/[0.05] hover:text-ink-50">›</Link>
         </div>

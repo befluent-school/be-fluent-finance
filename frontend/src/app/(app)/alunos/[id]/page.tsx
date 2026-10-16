@@ -1,3 +1,4 @@
+import { formatMonthBR, formatDateBR } from "@/lib/dates";
 import { notFound } from "next/navigation";
 import * as z from "zod";
 import { asc, desc, eq, inArray } from "drizzle-orm";
@@ -187,19 +188,14 @@ export default async function StudentDetailPage({
                 className="border-b border-ink-700/70 last:border-0 hover:bg-white/[0.03]"
               >
                 <td className="px-4 py-3">
-                  {new Date(invoice.reference_month).toLocaleDateString("pt-BR", {
-                    month: "long",
-                    year: "numeric",
-                  })}
+                  {formatMonthBR(invoice.reference_month)}
                 </td>
                 <td className="font-tabular px-4 py-3">{formatCurrencyBRL(invoice.amount)}</td>
                 <td className="font-tabular px-4 py-3">
-                  {new Date(invoice.due_date).toLocaleDateString("pt-BR")}
+                  {formatDateBR(invoice.due_date)}
                 </td>
                 <td className="font-tabular px-4 py-3">
-                  {invoice.paid_date
-                    ? new Date(invoice.paid_date).toLocaleDateString("pt-BR")
-                    : "—"}
+                  {formatDateBR(invoice.paid_date)}
                 </td>
                 <td className="px-4 py-3">{invoice.payment_method ?? "—"}</td>
                 <td className="px-4 py-3">

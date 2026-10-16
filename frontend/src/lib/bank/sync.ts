@@ -1,4 +1,5 @@
 import "server-only";
+import { todayBR } from "@/lib/dates";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Tx } from "@/lib/db";
 import { bankProviders, cashTransactions, costCategories } from "@/lib/db/schema";
@@ -150,8 +151,14 @@ export async function syncAllActiveProviders(tx: Tx, today: string): Promise<Syn
   // Segunda passagem: após inserir todos os providers, detecta transferências
   // que não foram pareadas durante o sync individual (ex: ASAAS sincroniza
   // primeiro sem encontrar o par do Inter, que ainda não estava no banco).
-  await reconcileTransfers(tx);
+  await afterSync(tx);
   return outcomes;
+}
+
+/** Passos que dependem de todas as contas já sincronizadas. */
+export async function afterSync(tx: Tx): Promise<void> {
+  await reconcileTransfers(tx);
+  await tx.execute(sql`select public.baixar_mensalidades_por_extrato()`);
 }
 
 /**
@@ -231,6 +238,6 @@ export async function ensureBankSyncRecent(tx: Tx): Promise<void> {
     )
     .limit(1);
   if (!due) return; // nenhum provider ativo vencido → nada a fazer
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBR();
   await syncAllActiveProviders(tx, today);
 }

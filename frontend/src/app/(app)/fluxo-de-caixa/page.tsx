@@ -1,3 +1,4 @@
+import { todayBR, formatMonthBR, formatDateBR } from "@/lib/dates";
 import Link from "next/link";
 import { and, asc, eq, gte, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
@@ -81,7 +82,7 @@ export default async function FluxoDeCaixaPage({
 
   // Período customizado (de/ate) tem prioridade sobre a navegação por mês.
   const usingCustomPeriod = Boolean(de && ate);
-  const referenceMonth = parseYearMonth(mes, new Date().toISOString().slice(0, 7));
+  const referenceMonth = parseYearMonth(mes, todayBR().slice(0, 7));
   const nextMonth = addMonths(referenceMonth, 1);
   const previousMonth = addMonths(referenceMonth, -1);
 
@@ -250,8 +251,8 @@ export default async function FluxoDeCaixaPage({
   const sortedCategoryTotals = Array.from(categoryTotals.entries()).sort((a, b) => b[1] - a[1]);
 
   const periodLabel = usingCustomPeriod
-    ? `${new Date(de! + "T00:00:00").toLocaleDateString("pt-BR")} — ${new Date(ate! + "T00:00:00").toLocaleDateString("pt-BR")}`
-    : new Date(`${referenceMonth}-01`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+    ? `${formatDateBR(de!)} — ${formatDateBR(ate!)}`
+    : formatMonthBR(referenceMonth);
 
   const exportRows: ExportRow[] = periodTransactions.map((t) => ({
     date: t.date,
@@ -452,7 +453,7 @@ export default async function FluxoDeCaixaPage({
                 className="border-b border-ink-700/70 last:border-0 hover:bg-white/[0.03]"
               >
                 <td className="font-tabular px-4 py-3">
-                  {new Date(t.date).toLocaleDateString("pt-BR")}
+                  {formatDateBR(t.date)}
                 </td>
                 <td className="px-4 py-3">{t.description}</td>
                 <td className="px-4 py-3">{t.cost_categories?.name ?? "—"}</td>

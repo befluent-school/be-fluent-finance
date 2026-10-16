@@ -1,3 +1,4 @@
+import { formatDateTimeBR } from "@/lib/dates";
 import { requireUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
 import { withUser, sequential } from "@/lib/db";
@@ -7,7 +8,7 @@ import { SettingsForm } from "./settings-form";
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  return formatDateTimeBR(iso);
 }
 
 function summarize(result: Record<string, unknown> | null): string {

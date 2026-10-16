@@ -1,5 +1,6 @@
 "use client";
 
+import { todayBR } from "@/lib/dates";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -20,11 +21,11 @@ export function PeriodSelector() {
   const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState(new Date().toISOString().slice(0, 10));
+  const [customTo, setCustomTo] = useState(todayBR());
 
   function applyShortcut(days: number) {
     const de = isoDaysAgo(days);
-    const ate = new Date().toISOString().slice(0, 10);
+    const ate = todayBR();
     router.push(`/fluxo-de-caixa?de=${de}&ate=${ate}`);
   }
 

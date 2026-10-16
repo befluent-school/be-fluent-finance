@@ -1,3 +1,4 @@
+import { todayBR, formatMonthBR, formatDateBR } from "@/lib/dates";
 import Link from "next/link";
 import { sql } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
@@ -16,6 +17,7 @@ type InvoiceRow = {
   paid_date: string | null;
   payment_method: string | null;
   effective_status: string;
+  auto: boolean;
   enrollments: {
     students: { id: string; full_name: string } | null;
     plans: { name: string } | null;
@@ -33,7 +35,7 @@ export default async function MensalidadesPage({
   searchParams: Promise<{ mes?: string }>;
 }) {
   const { mes } = await searchParams;
-  const referenceMonth = parseYearMonth(mes, new Date().toISOString().slice(0, 7));
+  const referenceMonth = parseYearMonth(mes, todayBR().slice(0, 7));
   const previousMonth = addMonths(referenceMonth, -1);
   const nextMonthValue = addMonths(referenceMonth, 1);
 
@@ -50,10 +52,12 @@ export default async function MensalidadesPage({
       student_name: string | null;
       plan_name: string | null;
       has_enrollment: boolean;
+      auto: boolean;
     }>(sql`
       select i.id, i.amount, i.due_date, i.paid_date, i.payment_method, i.effective_status,
              s.id as student_id, s.full_name as student_name, p.name as plan_name,
-             (e.id is not null) as has_enrollment
+             (e.id is not null) as has_enrollment,
+             (i.cash_transaction_id is not null) as auto
         from public.invoices_with_effective_status i
         left join public.enrollments e on e.id = i.enrollment_id
         left join public.students s on s.id = e.student_id
@@ -69,6 +73,7 @@ export default async function MensalidadesPage({
         paid_date: r.paid_date,
         payment_method: r.payment_method,
         effective_status: r.effective_status,
+        auto: r.auto,
         enrollments: r.has_enrollment
           ? {
               students: r.student_id ? { id: r.student_id, full_name: r.student_name ?? "" } : null,
@@ -98,10 +103,7 @@ export default async function MensalidadesPage({
             ‹
           </Link>
           <p className="text-sm capitalize text-ink-300">
-            {new Date(`${referenceMonth}-01`).toLocaleDateString("pt-BR", {
-              month: "long",
-              year: "numeric",
-            })}
+            {formatMonthBR(referenceMonth)}
           </p>
           <Link
             href={`/mensalidades?mes=${nextMonthValue}`}
@@ -114,8 +116,8 @@ export default async function MensalidadesPage({
       </div>
 
       <div className="mt-4 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-xs text-ink-300">
-        Marcar como pago aqui não lança automaticamente no Fluxo de Caixa. O valor só aparece lá
-        quando o extrato bancário correspondente for importado em Conciliação Bancária.
+        Mensalidades pagas pelo ASAAS recebem baixa automática na sincronização bancária (mesmo nome do
+        aluno ou responsável e mesmo valor). Marcar como pago aqui não lança nada no Fluxo de Caixa.
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -163,9 +165,16 @@ export default async function MensalidadesPage({
                 <td className="px-4 py-3">{invoice.enrollments?.plans?.name ?? "—"}</td>
                 <td className="font-tabular px-4 py-3">{formatCurrencyBRL(invoice.amount)}</td>
                 <td className="font-tabular px-4 py-3">
-                  {new Date(invoice.due_date).toLocaleDateString("pt-BR")}
+                  {formatDateBR(invoice.due_date)}
                 </td>
-                <td className="px-4 py-3">{invoice.payment_method ?? "—"}</td>
+                <td className="px-4 py-3">
+                  {invoice.payment_method ?? "—"}
+                  {invoice.auto && (
+                    <span className="ml-1 text-xs text-ink-500" title="Baixa automática pela cobrança recebida no ASAAS">
+                      · ASAAS
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   <StatusBadge status={invoice.effective_status} />
                 </td>

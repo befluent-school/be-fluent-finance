@@ -5,6 +5,7 @@ import { plans as plansTable, students as studentsTable, teachers as teachersTab
 import { loadBeelyPipeline, type BeelyDeal } from "@/lib/beely-source";
 import { formatCurrencyBRL } from "@shared/finance";
 import { initials } from "@/lib/utils";
+import { todayBR } from "@/lib/dates";
 import { toPlan, toTeacher } from "@/lib/queries/mappers";
 import { EnrollStudentForm } from "../alunos/enroll-student-form";
 
@@ -39,8 +40,12 @@ export default async function CrmPage() {
 
   const contactsByName = new Map(contacts.map((c) => [c.name, c]));
   const stageById = new Map(stages.map((s) => [s.id, s.name]));
-  const existingEmails = new Set(students.map((s) => s.email).filter(Boolean));
-  const existingPhones = new Set(students.map((s) => s.phone).filter(Boolean));
+  // Compara só os dígitos finais do telefone (ignora +55, DDD com parênteses, traços)
+  // e e-mail sem maiúsculas, para não converter o mesmo lead em aluno duas vezes.
+  const normEmail = (e: string | null | undefined) => (e ? e.trim().toLowerCase() : "");
+  const normPhone = (p: string | null | undefined) => (p ? p.replace(/\D/g, "").slice(-11) : "");
+  const existingEmails = new Set(students.map((s) => normEmail(s.email)).filter(Boolean));
+  const existingPhones = new Set(students.map((s) => normPhone(s.phone)).filter((p) => p.length >= 10));
 
   const allDeals = deals;
   const total = allDeals.length;
@@ -49,11 +54,9 @@ export default async function CrmPage() {
   const open = total - won - lost;
   const conversionRate = total > 0 ? (won / total) * 100 : 0;
 
-  const now = new Date();
-  const newThisMonth = allDeals.filter((d) => {
-    const created = new Date(d.created_at);
-    return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
-  }).length;
+  const thisMonth = todayBR().slice(0, 7);
+  const monthOf = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit" });
+  const newThisMonth = allDeals.filter((d) => monthOf.format(new Date(d.created_at)) === thisMonth).length;
 
   const dealsByStage = new Map<string, BeelyDeal[]>();
   for (const deal of allDeals.filter((d) => d.status === "open")) {
@@ -106,8 +109,7 @@ export default async function CrmPage() {
             {wonDeals.map((deal) => {
               const contact = deal.contact ? contactsByName.get(deal.contact) : undefined;
               const alreadyStudent =
-                (contact?.email && existingEmails.has(contact.email)) ||
-                (contact?.phone && existingPhones.has(contact.phone));
+                existingEmails.has(normEmail(contact?.email)) || existingPhones.has(normPhone(contact?.phone));
 
               return (
                 <tr key={deal.id} className="border-b border-ink-700/70 last:border-0 hover:bg-white/[0.03]">

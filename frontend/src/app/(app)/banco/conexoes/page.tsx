@@ -1,3 +1,4 @@
+import { formatDateTimeBR } from "@/lib/dates";
 import Link from "next/link";
 import { asc } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
@@ -10,7 +11,7 @@ import { ProviderCard } from "./provider-card";
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "nunca";
-  return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  return formatDateTimeBR(iso);
 }
 
 export default async function ConexoesPage() {

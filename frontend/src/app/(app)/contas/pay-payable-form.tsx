@@ -1,5 +1,6 @@
 "use client";
 
+import { todayBR } from "@/lib/dates";
 import { useActionState, useRef, useState } from "react";
 import { markPayablePaid, type MarkPayablePaidState } from "@/app/actions/payables";
 import { formatCurrencyBRL } from "@shared/finance";
@@ -10,7 +11,7 @@ const inputClass =
 export function PayPayableForm({ payableId, amount }: { payableId: string; amount: number }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [state, action, pending] = useActionState<MarkPayablePaidState, FormData>(markPayablePaid, undefined);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBR();
   const [total, setTotal] = useState(amount);
 
   return (

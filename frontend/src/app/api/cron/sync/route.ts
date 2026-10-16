@@ -1,3 +1,4 @@
+import { todayBR } from "@/lib/dates";
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { env } from "@/lib/env";
@@ -35,7 +36,7 @@ async function handle(req: Request): Promise<Response> {
     return NextResponse.json({ error: "não autorizado" }, { status: 401 });
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBR();
   try {
     const result = await withUser(cronUser, async (tx) => {
       const { rows } = await tx.execute<{ result: Record<string, unknown> }>(

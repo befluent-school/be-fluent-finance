@@ -1,3 +1,4 @@
+import { todayBR, formatMonthBR } from "@/lib/dates";
 import { and, asc, eq, gte, isNotNull, lt, lte, ne, or, isNull, sql, sum } from "drizzle-orm";
 import { formatCurrencyBRL } from "@shared/finance";
 import Link from "next/link";
@@ -39,7 +40,7 @@ export default async function DashboardPage({
 
   const canViewNetProfit = Policies.viewNetProfit.check(user);
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = todayBR().slice(0, 7);
   const selectedMonth = parseYearMonth(mes, currentMonth);
   const isCurrentMonth = selectedMonth === currentMonth;
   const referenceMonth = `${selectedMonth}-01`;
@@ -177,7 +178,7 @@ export default async function DashboardPage({
   const inadimplenciaTotal = inadimplencia.total_atrasado;
   const faturasAtrasadas = inadimplencia.faturas_atrasadas;
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayBR();
   const tasksOverdue = upcomingTasks.filter((t) => t.due_date < todayStr).length;
   const tasksDueSoon = upcomingTasks.length;
 
@@ -203,10 +204,7 @@ export default async function DashboardPage({
             ‹
           </Link>
           <p className="text-sm capitalize text-ink-300">
-            {new Date(`${selectedMonth}-01`).toLocaleDateString("pt-BR", {
-              month: "long",
-              year: "numeric",
-            })}
+            {formatMonthBR(selectedMonth)}
           </p>
           <Link
             href={`/dashboard?mes=${nextMonthValue}`}
@@ -224,7 +222,7 @@ export default async function DashboardPage({
 
       {!isCurrentMonth && (
         <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-xs text-ink-300">
-          Mostrando dados de {new Date(`${selectedMonth}-01`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}.
+          Mostrando dados de {formatMonthBR(selectedMonth)}.
           Os valores que são &quot;foto de agora&quot; (Saldo total em caixa) sempre refletem o
           momento atual, não o mês selecionado — só os indicadores &quot;do mês&quot; mudam.
         </div>

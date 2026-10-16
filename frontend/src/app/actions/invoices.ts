@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import * as z from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { withUser } from "@/lib/db";
 import { enrollments, invoices } from "@/lib/db/schema";
 import { logDbError } from "@/lib/db/errors";
@@ -22,20 +22,31 @@ export async function generateMonthlyInvoices(referenceMonth: string) {
   if (!yearMonth.safeParse(referenceMonth).success) return { created: 0, error: "Mês inválido." };
 
   const [year, month] = referenceMonth.split("-").map(Number);
+  const firstDay = `${referenceMonth}-01`;
+  const lastDayNumber = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const lastDay = `${referenceMonth}-${String(lastDayNumber).padStart(2, "0")}`;
 
   try {
     const created = await withUser(user.id, async (tx) => {
+      // Mesmas regras da virada automática (run_monthly_rollover): só matrículas
+      // vigentes no mês, e vencimento limitado ao último dia do mês.
       const active = await tx
         .select({ id: enrollments.id, monthlyValue: enrollments.monthlyValue, dueDay: enrollments.dueDay })
         .from(enrollments)
-        .where(eq(enrollments.status, "active"));
+        .where(
+          and(
+            eq(enrollments.status, "active"),
+            lte(enrollments.startDate, lastDay),
+            or(isNull(enrollments.endDate), gte(enrollments.endDate, firstDay))
+          )
+        );
       if (active.length === 0) return 0;
 
       const rows = active.map((enrollment) => ({
         enrollmentId: enrollment.id,
-        referenceMonth: `${referenceMonth}-01`,
+        referenceMonth: firstDay,
         amount: enrollment.monthlyValue,
-        dueDate: new Date(Date.UTC(year, month - 1, enrollment.dueDay)).toISOString().slice(0, 10),
+        dueDate: `${referenceMonth}-${String(Math.min(enrollment.dueDay, lastDayNumber)).padStart(2, "0")}`,
       }));
 
       const inserted = await tx

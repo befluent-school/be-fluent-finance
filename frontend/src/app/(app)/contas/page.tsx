@@ -1,3 +1,4 @@
+import { todayBR, formatMonthBR } from "@/lib/dates";
 import Link from "next/link";
 import { asc, eq } from "drizzle-orm";
 import { formatCurrencyBRL } from "@shared/finance";
@@ -37,7 +38,7 @@ export default async function ContasPage({
   const canManage = Policies.manageFinance.check(user);
 
   const { mes } = await searchParams;
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = todayBR().slice(0, 7);
   const selectedMonth = parseYearMonth(mes, currentMonth);
   const referenceMonth = `${selectedMonth}-01`;
 
@@ -110,7 +111,7 @@ export default async function ContasPage({
       <div className="mt-8 flex items-center gap-3">
         <Link href={`/contas?mes=${addMonths(selectedMonth, -1)}`} className="rounded-md px-2 py-1 text-sm text-ink-300 hover:bg-white/[0.05] hover:text-ink-50">‹</Link>
         <p className="text-sm capitalize text-ink-300">
-          {new Date(referenceMonth).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}
+          {formatMonthBR(referenceMonth)}
         </p>
         <Link href={`/contas?mes=${addMonths(selectedMonth, 1)}`} className="rounded-md px-2 py-1 text-sm text-ink-300 hover:bg-white/[0.05] hover:text-ink-50">›</Link>
       </div>

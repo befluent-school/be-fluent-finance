@@ -1,3 +1,4 @@
+import { todayBR } from "@/lib/dates";
 import { asc, eq } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
 import { withUser, sequential } from "@/lib/db";
@@ -13,7 +14,7 @@ import { TargetForm } from "./target-form";
 
 export default async function MetasPage() {
   const user = await requireUser();
-  const referenceMonth = new Date().toISOString().slice(0, 7) + "-01";
+  const referenceMonth = todayBR().slice(0, 7) + "-01";
 
   const { plans, targets, studentTargetRows } = await withUser(user.id, async (tx) => {
     const [plans, targets, studentTargetRows] = await sequential([

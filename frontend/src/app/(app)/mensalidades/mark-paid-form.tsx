@@ -1,5 +1,6 @@
 "use client";
 
+import { todayBR } from "@/lib/dates";
 import { useActionState, useRef, useState } from "react";
 import { markInvoicePaid, type MarkPaidState } from "@/app/actions/invoices";
 import { calculateLateFee, formatCurrencyBRL } from "@shared/finance";
@@ -22,7 +23,7 @@ export function MarkPaidForm({
     undefined
   );
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBR();
   const [paidDate, setPaidDate] = useState(today);
   const suggested = calculateLateFee(amount, dueDate, paidDate);
   const [lateFee, setLateFee] = useState(suggested.lateFee);

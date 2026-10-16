@@ -27,7 +27,10 @@ function db(): Db {
  */
 export async function withUser<T>(userId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
   return db().transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.user_id', ${userId}, true)`);
+    // current_date (status de atraso, virada do mês) segue o dia de Brasília, não o UTC do servidor.
+    await tx.execute(
+      sql`select set_config('app.user_id', ${userId}, true), set_config('TimeZone', 'America/Sao_Paulo', true)`
+    );
     return fn(tx);
   });
 }
