@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { login, type LoginState } from "@/app/actions/auth";
 
 export function LoginForm({ notice }: { notice?: { tone: "ok" | "error"; text: string } }) {
   const [state, action, pending] = useActionState<LoginState, FormData>(login, undefined);
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <form action={action} className="mt-8 space-y-4">
@@ -23,7 +25,11 @@ export function LoginForm({ notice }: { notice?: { tone: "ok" | "error"; text: s
           id="email"
           name="email"
           type="email"
+          inputMode="email"
           autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           required
           className="mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 placeholder:text-ink-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
         />
@@ -36,14 +42,30 @@ export function LoginForm({ notice }: { notice?: { tone: "ok" | "error"; text: s
         <label htmlFor="password" className="block text-sm font-medium text-ink-100">
           Senha
         </label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          className="mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 placeholder:text-ink-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-        />
+        <div className="relative mt-1">
+          <input
+            id="password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="current-password"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            required
+            className="w-full rounded-md border border-ink-700 bg-ink-950 py-2 pl-3 pr-11 text-ink-50 placeholder:text-ink-500 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+          />
+          {/* No celular é fácil o teclado ou o preenchimento automático trocar
+              a senha sem o usuário perceber: deixa conferir o que foi digitado. */}
+          <button
+            type="button"
+            onClick={() => setShowPassword((v) => !v)}
+            aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+            aria-pressed={showPassword}
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-ink-400 hover:text-ink-50"
+          >
+            {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          </button>
+        </div>
         {state?.errors?.password && (
           <p className="mt-1 text-xs text-status-overdue">{state.errors.password[0]}</p>
         )}

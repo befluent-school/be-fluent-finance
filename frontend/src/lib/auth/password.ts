@@ -56,6 +56,18 @@ export async function verifyPassword(password: string, stored: string | null | u
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+/**
+ * Formas em que a MESMA senha pode chegar do celular: espaço sobrando no
+ * fim/início (teclado ou preenchimento automático) e acentos em outra
+ * codificação Unicode (NFC × NFD). A original sempre vem primeiro.
+ */
+export function passwordCandidates(password: string): string[] {
+  const variants = [password, password.normalize("NFC"), password.normalize("NFD")];
+  const trimmed = password.trim();
+  if (trimmed && trimmed !== password) variants.push(trimmed, trimmed.normalize("NFC"), trimmed.normalize("NFD"));
+  return [...new Set(variants)];
+}
+
 /** true se o hash guardado deve ser regravado no formato/custo atual. */
 export function needsRehash(stored: string): boolean {
   if (isBcrypt(stored)) return true;

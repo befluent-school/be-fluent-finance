@@ -79,6 +79,7 @@ export function verifyTotp(
   lastStep: number | null,
   nowMs = Date.now()
 ): number | null {
+  code = code.replace(/\s/g, ""); // "123 456" colado do autenticador
   if (!/^\d{6}$/.test(code)) return null;
   const secret = base32Decode(secretBase32);
   const now = currentStep(nowMs);

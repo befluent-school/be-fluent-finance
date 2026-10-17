@@ -8,7 +8,7 @@ import { withSystem } from "@/lib/db";
 import { passwordResetTokens, profiles, users } from "@/lib/db/schema";
 import { assertSameOrigin, requestInfo } from "@/lib/request";
 import { emailLayout, sendMail } from "@/lib/mailer";
-import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@/lib/auth/password";
+import { hashPassword, needsRehash, passwordCandidates, passwordProblem, verifyPassword } from "@/lib/auth/password";
 import { randomToken, sha256 } from "@/lib/auth/tokens";
 import { isRateLimited, recordAttempt } from "@/lib/auth/rate-limit";
 import { auditAuth } from "@/lib/auth/audit";
@@ -63,7 +63,14 @@ export async function login(_state: LoginState, formData: FormData): Promise<Log
 
     const [user] = await tx.select().from(users).where(eq(users.email, email));
     // Sempre roda a verificação (mesmo sem usuário) para o tempo de resposta não revelar e-mails cadastrados.
-    const passwordOk = await verifyPassword(password, user?.passwordHash);
+    let matchedPassword: string | null = null;
+    for (const candidate of passwordCandidates(password)) {
+      if (await verifyPassword(candidate, user?.passwordHash)) {
+        matchedPassword = candidate;
+        break;
+      }
+    }
+    const passwordOk = matchedPassword !== null;
     const locked = Boolean(user?.lockedUntil && new Date(user.lockedUntil) > new Date());
 
     if (!user || !passwordOk || locked) {
@@ -106,7 +113,7 @@ export async function login(_state: LoginState, formData: FormData): Promise<Log
         lastLoginAt: sql`now()`,
         // Hash legado (bcrypt do Supabase) ou com custo antigo: regrava em scrypt.
         ...(user.passwordHash && needsRehash(user.passwordHash)
-          ? { passwordHash: await hashPassword(password) }
+          ? { passwordHash: await hashPassword(matchedPassword ?? password) }
           : {}),
       })
       .where(eq(users.id, user.id));
