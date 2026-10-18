@@ -10,6 +10,7 @@ import {
 } from "@/app/actions/payroll";
 import { suggestAmount, type PayrollRow } from "@/lib/payroll-shared";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { EditTeacherDialog } from "./edit-teacher-dialog";
 
 const cellInput =
   "w-24 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-ink-50 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500";
@@ -36,19 +37,21 @@ export function PayrollRowEditor({
   );
 
   const confirmed = row.status === "confirmado";
-  const isAuto = row.payment_type === "por_hora" || row.payment_type === "fixo";
+  const isAuto = row.payment_type !== "outro";
 
   const [lessons, setLessons] = useState(row.lessons_given);
-  const [finalAmount, setFinalAmount] = useState(row.final_amount || row.suggested_amount);
+  const [finalAmount, setFinalAmount] = useState(
+    row.final_amount || row.suggested_amount || (row.status === "sem_folha" ? suggestAmount(row.payment_type, row.payment_reference_value, row.lessons_given, row.student_revenue) : 0),
+  );
 
-  const liveSuggested = suggestAmount(row.payment_type, row.payment_reference_value, lessons);
+  const liveSuggested = suggestAmount(row.payment_type, row.payment_reference_value, lessons, row.student_revenue);
 
   // Ao mudar as aulas numa regra automática (por hora/fixo), alinhamos o
   // "a pagar" ao sugerido no mesmo evento (sem useEffect → sem cascata de
   // renders). O usuário ainda pode sobrescrever o valor manualmente depois.
   function onLessonsChange(next: number) {
     setLessons(next);
-    if (isAuto) setFinalAmount(suggestAmount(row.payment_type, row.payment_reference_value, next));
+    if (isAuto) setFinalAmount(suggestAmount(row.payment_type, row.payment_reference_value, next, row.student_revenue));
   }
 
   const err = saveState?.message || confirmState?.message || reopenState?.message;
@@ -56,11 +59,25 @@ export function PayrollRowEditor({
   return (
     <>
       <tr className="border-b border-ink-700/70 last:border-0 hover:bg-white/[0.03]">
-        <td className="px-4 py-3 text-ink-50">{row.full_name}</td>
+        <td className="px-4 py-3 text-ink-50">
+          <div className="flex items-center gap-1.5">
+            <span>{row.full_name}</span>
+            {canManage && <EditTeacherDialog row={row} />}
+          </div>
+          <p className="text-xs text-ink-500">{row.active_students} aluno(s) ativo(s)</p>
+        </td>
         <td className="px-4 py-3 text-ink-300">
           <span>{paymentTypeLabel}</span>
-          {row.payment_reference_value != null && (
-            <span className="text-ink-500"> · {formatCurrencyBRL(row.payment_reference_value)}</span>
+          {row.payment_reference_value != null && row.payment_type !== "repasse_integral" && (
+            <span className="text-ink-500">
+              {" · "}
+              {row.payment_type === "comissao"
+                ? `${row.payment_reference_value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`
+                : formatCurrencyBRL(row.payment_reference_value)}
+            </span>
+          )}
+          {(row.payment_type === "comissao" || row.payment_type === "repasse_integral") && (
+            <p className="text-xs text-ink-500">Alunos pagaram {formatCurrencyBRL(row.student_revenue)} no mês</p>
           )}
         </td>
         <td className="px-4 py-3">

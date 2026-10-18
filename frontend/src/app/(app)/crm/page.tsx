@@ -30,7 +30,7 @@ export default async function CrmPage() {
     return (
       <div className="card-premium rounded-lg p-8 text-center text-sm text-ink-300">
         {pipeline.reason === "disabled"
-          ? "Integração com o Beely CRM desativada (BEELY_SOURCE=off)."
+          ? "A integração com o Beely CRM ainda não foi configurada neste servidor."
           : "Não foi possível ler os dados do Beely CRM agora. Tente novamente em instantes."}
       </div>
     );

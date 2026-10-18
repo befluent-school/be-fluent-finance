@@ -8,6 +8,7 @@ import {
   createCostCategory,
   type CashTransactionState,
 } from "@/app/actions/cash-transactions";
+import { suggestRulePattern } from "@/lib/rule-pattern";
 
 type CostCategory = { id: string; name: string; type: string };
 
@@ -19,6 +20,7 @@ type ExistingTransaction = {
   amount: number;
   type: "entrada" | "saida";
   payment_method: string | null;
+  source?: string;
 };
 
 const inputClass =
@@ -178,6 +180,26 @@ export function NewTransactionForm({
               </select>
             </div>
           </div>
+
+          {isEdit && transaction && transaction.source !== "manual" && transaction.source !== "opening" && (
+            <div className="rounded-md border border-ink-700 bg-white/[0.02] p-3">
+              <label className="flex items-start gap-2 text-sm text-ink-100">
+                <input type="checkbox" name="learnRule" className="mt-1" />
+                <span>
+                  Sempre categorizar assim os lançamentos de{" "}
+                  {transaction.type === "entrada" ? "entrada" : "saída"} que contenham:
+                </span>
+              </label>
+              <input
+                name="rulePattern"
+                defaultValue={suggestRulePattern(transaction.description)}
+                className={inputClass}
+              />
+              <p className="mt-1 text-xs text-ink-500">
+                Vale para os lançamentos sem categoria que já existem e para os próximos que chegarem dos bancos.
+              </p>
+            </div>
+          )}
 
           {state?.message && <p className="text-sm text-status-overdue">{state.message}</p>}
 

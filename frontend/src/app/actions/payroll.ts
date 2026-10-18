@@ -50,8 +50,16 @@ export async function saveTeacherPayment(
     await withUser(user.id, async (tx) => {
       // Regra do professor para recalcular o sugerido.
       const { rows } = await tx.execute(
-        sql`select payment_type, payment_reference_value
-            from public.teachers where id = ${teacherId}::uuid`,
+        sql`select t.payment_type, t.payment_reference_value,
+                   coalesce((
+                     select sum(coalesce(i.total_paid, i.amount))
+                       from public.invoices i
+                       join public.enrollments e on e.id = i.enrollment_id
+                      where e.teacher_id = t.id
+                        and i.reference_month = ${referenceMonth}::date
+                        and i.paid_date is not null
+                   ), 0) as student_revenue
+            from public.teachers t where t.id = ${teacherId}::uuid`,
       );
       const t = rows[0];
       if (!t) throw new Error("teacher_not_found");
@@ -59,6 +67,7 @@ export async function saveTeacherPayment(
         t.payment_type as PaymentType,
         t.payment_reference_value === null ? null : Number(t.payment_reference_value),
         lessonsGiven,
+        Number(t.student_revenue ?? 0),
       );
 
       await tx

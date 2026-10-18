@@ -35,7 +35,16 @@ export async function listPayrollForMonth(tx: Tx, referenceMonth: string): Promi
           coalesce(tp.final_amount, 0) as final_amount,
           coalesce(tp.status, 'sem_folha') as status,
           tp.payable_id,
-          tp.notes
+          tp.notes,
+          coalesce((
+            select sum(coalesce(i.total_paid, i.amount))
+              from public.invoices i
+              join public.enrollments e on e.id = i.enrollment_id
+             where e.teacher_id = t.id
+               and i.reference_month = ${referenceMonth}::date
+               and i.paid_date is not null
+          ), 0) as student_revenue,
+          (select count(*) from public.enrollments e where e.teacher_id = t.id and e.status = active) as active_students
         from public.teachers t
         left join public.teacher_payments tp
           on tp.teacher_id = t.id and tp.reference_month = ${referenceMonth}::date
@@ -55,6 +64,8 @@ export async function listPayrollForMonth(tx: Tx, referenceMonth: string): Promi
     status: r.status as PayrollRow["status"],
     payable_id: (r.payable_id as string | null) ?? null,
     notes: (r.notes as string | null) ?? null,
+    student_revenue: Number(r.student_revenue ?? 0),
+    active_students: Number(r.active_students ?? 0),
   }));
 }
 

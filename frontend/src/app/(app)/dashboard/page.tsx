@@ -68,6 +68,7 @@ export default async function DashboardPage({
     recvOpen,
     payOpen,
     dasApuracao,
+    divergencias,
   } = await withUser(user.id, async (tx) => {
     const [
       mrr,
@@ -84,6 +85,7 @@ export default async function DashboardPage({
       recvOpen,
       payOpen,
       dasApuracao,
+      divergencias,
     ] = await sequential([
       () => getMrr(tx),
       () => getTicketByPlan(tx),
@@ -137,6 +139,19 @@ export default async function DashboardPage({
       // DAS da competência fechada (mês anterior ao corrente) — é o imposto
       // que efetivamente se paga agora.
       () => getSimplesApuracao(tx, `${addMonths(currentMonth, -1)}-01`),
+      // Conferência automática: saldo que o banco informa × saldo calculado.
+      async () => {
+        const { rows } = await tx.execute<{ label: string; banco: string; calculado: string }>(sql`
+          select p.label, p.bank_balance as banco,
+                 coalesce((select sum(case when v.type = entrada then v.amount else -v.amount end)
+                             from public.cash_transactions_with_balance v
+                            where v.bank_provider_id = p.id and v.in_balance), 0) as calculado
+            from public.bank_providers p
+           where p.active and p.bank_balance is not null`);
+        return rows
+          .map((row) => ({ label: row.label, banco: Number(row.banco), calculado: Number(row.calculado) }))
+          .filter((row) => Math.abs(row.banco - row.calculado) > 1);
+      },
     ]);
     return {
       mrr,
@@ -153,6 +168,7 @@ export default async function DashboardPage({
       recvOpen,
       payOpen,
       dasApuracao,
+      divergencias,
     };
   });
 
@@ -221,6 +237,27 @@ export default async function DashboardPage({
           Os valores que são &quot;foto de agora&quot; (Saldo total em caixa) sempre refletem o
           momento atual, não o mês selecionado — só os indicadores &quot;do mês&quot; mudam.
         </div>
+      )}
+
+      {divergencias.length > 0 && (
+        <Link
+          href="/fluxo-de-caixa"
+          className="mt-6 block rounded-md border border-status-overdue/40 bg-status-overdue/10 p-4 text-sm text-ink-100 hover:bg-status-overdue/15"
+        >
+          <p className="font-semibold text-status-overdue">Saldo do sistema diferente do banco</p>
+          <ul className="mt-1 space-y-0.5">
+            {divergencias.map((d) => (
+              <li key={d.label}>
+                {d.label}: banco {formatCurrencyBRL(d.banco)} × sistema {formatCurrencyBRL(d.calculado)} (diferença{" "}
+                {formatCurrencyBRL(d.calculado - d.banco)})
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-ink-400">
+            Falta algum lançamento, há duplicidade ou o saldo inicial está errado. Os relatórios desta conta não são confiáveis até
+            corrigir — veja a conferência no Fluxo de Caixa.
+          </p>
+        </Link>
       )}
 
       <h2 className="mt-6 text-lg font-semibold text-ink-50">Caixa</h2>

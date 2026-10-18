@@ -208,6 +208,15 @@ export const invoices = pgTable("invoices", {
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
+export const categorizationRules = pgTable("categorization_rules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  pattern: text("pattern").notNull(),
+  type: text("type").notNull().$type<"entrada" | "saida">(),
+  categoryId: uuid("category_id").notNull(),
+  createdBy: uuid("created_by"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
 export const costCategories = pgTable("cost_categories", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),

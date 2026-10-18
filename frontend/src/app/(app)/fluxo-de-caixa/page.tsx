@@ -485,6 +485,7 @@ export default async function FluxoDeCaixaPage({
                       amount: t.amount,
                       type: t.type,
                       payment_method: t.payment_method,
+                      source: t.source,
                     }}
                     trigger={
                       <span className="rounded-md bg-white/[0.06] px-3 py-1 text-xs font-semibold text-ink-100 hover:bg-white/[0.1]">

@@ -13,10 +13,11 @@ describe("folha de professores — valor sugerido pela regra", () => {
     expect(suggestAmount("fixo", 1200, 0)).toBe(1200);
   });
 
-  it("comissão, repasse e outro não têm sugestão automática (0 → valor manual)", () => {
-    expect(suggestAmount("comissao", 58.33, 10)).toBe(0);
-    expect(suggestAmount("repasse_integral", null, 10)).toBe(0);
-    expect(suggestAmount("outro", 100, 10)).toBe(0);
+  it("comissão e repasse sugerem pela receita dos alunos; outro fica manual", () => {
+    expect(suggestAmount("comissao", 40, 10, 2400)).toBe(960);
+    expect(suggestAmount("comissao", 58.33, 10)).toBe(0); // sem receita no mês
+    expect(suggestAmount("repasse_integral", null, 10, 1155.5)).toBe(1155.5);
+    expect(suggestAmount("outro", 100, 10, 5000)).toBe(0);
   });
 
   it("valor de referência nulo vira 0, sem quebrar", () => {

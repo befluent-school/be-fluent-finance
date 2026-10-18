@@ -136,9 +136,10 @@ export default async function ProfessoresPage({
       </div>
 
       <p className="mt-4 text-xs text-ink-500">
-        O valor <strong>Sugerido</strong> vem da regra do professor (por hora = aulas × valor/hora; fixo = valor do
-        mês). Comissão e repasse dependem da receita dos alunos e entram como valor manual. Ajuste <strong>A pagar</strong>{" "}
-        quando houver faltas ou remarcações e confirme para lançar em Contas a Pagar.
+        O valor <strong>Sugerido</strong> vem da regra do professor: por hora = aulas × valor/aula; fixo = valor do mês;
+        comissão = % das mensalidades pagas pelos alunos dele no mês; repasse = 100% dessas mensalidades. Use o lápis
+        ao lado do nome para mudar a regra. Ajuste <strong>A pagar</strong> quando houver faltas ou remarcações e
+        confirme para lançar em Contas a Pagar.
       </p>
     </div>
   );

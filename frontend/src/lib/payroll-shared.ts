@@ -19,22 +19,31 @@ export type PayrollRow = {
   status: "aberto" | "confirmado" | "sem_folha";
   payable_id: string | null;
   notes: string | null;
+  /** Mensalidades pagas no mês pelos alunos deste professor. */
+  student_revenue: number;
+  /** Alunos com matrícula ativa com este professor. */
+  active_students: number;
 };
 
 /**
  * Valor sugerido pela regra do professor.
  * - por_hora → aulas dadas × valor/hora
  * - fixo     → valor fixo (independe das aulas)
- * - comissao / repasse_integral / outro → 0 (depende da receita dos alunos, que
- *   varia; o owner preenche o valor final manualmente, usando a regra como guia).
+ * - comissao → % (valor de referência) × mensalidades pagas pelos alunos dele no mês
+ * - repasse_integral → 100% das mensalidades pagas pelos alunos dele no mês
+ * - outro → 0 (o owner informa o valor)
  */
 export function suggestAmount(
   paymentType: PaymentType,
   referenceValue: number | null,
   lessonsGiven: number,
+  studentRevenue = 0,
 ): number {
   const ref = referenceValue ?? 0;
-  if (paymentType === "por_hora") return Math.round(ref * lessonsGiven * 100) / 100;
+  const round = (v: number) => Math.round(v * 100) / 100;
+  if (paymentType === "por_hora") return round(ref * lessonsGiven);
   if (paymentType === "fixo") return ref;
+  if (paymentType === "comissao") return round((studentRevenue * ref) / 100);
+  if (paymentType === "repasse_integral") return round(studentRevenue);
   return 0;
 }

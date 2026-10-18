@@ -2,17 +2,11 @@
 
 import { useActionState, useEffect, useRef } from "react";
 import { createTeacherForm, type TeacherFormState } from "@/app/actions/teachers";
+import { PAYMENT_TYPES } from "./payment-types";
 
 const inputClass =
   "mt-1 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-ink-50 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500";
 
-const PAYMENT_TYPES: { value: string; label: string; hint: string }[] = [
-  { value: "por_hora", label: "Por hora/aula", hint: "Valor de referência = R$ por aula dada. O sistema multiplica pelas aulas." },
-  { value: "fixo", label: "Valor fixo mensal", hint: "Valor de referência = valor fixo pago todo mês, independente das aulas." },
-  { value: "comissao", label: "Comissão (%)", hint: "Valor de referência = % da receita. O valor a pagar é preenchido manualmente." },
-  { value: "repasse_integral", label: "Repasse integral", hint: "Repassa 100% do que os alunos pagam. Valor a pagar manual." },
-  { value: "outro", label: "Outro (manual)", hint: "Sem cálculo automático — você informa o valor a pagar na folha." },
-];
 
 export function NewTeacherForm() {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -53,10 +47,10 @@ export function NewTeacherForm() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-ink-100">Valor de referência (R$)</label>
+            <label className="block text-sm font-medium text-ink-100">Valor de referência</label>
             <input name="paymentReferenceValue" type="number" step="0.01" min="0" className={inputClass} placeholder="Ex.: 35.00" />
             <p className="mt-1 text-xs text-ink-500">
-              Para “por hora” é o valor por aula; para “fixo” é o valor do mês. Deixe vazio em repasse/comissão.
+              Por hora: R$ por aula. Fixo: R$ do mês. Comissão: o percentual (ex.: 40). Repasse: deixe vazio.
             </p>
           </div>
 

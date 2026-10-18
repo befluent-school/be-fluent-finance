@@ -2,9 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import * as z from "zod";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { withUser } from "@/lib/db";
-import { cashTransactions, costCategories } from "@/lib/db/schema";
+import { cashTransactions, categorizationRules, costCategories } from "@/lib/db/schema";
 import { logDbError } from "@/lib/db/errors";
 import { FORBIDDEN_MESSAGE, getActionUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
@@ -27,7 +27,7 @@ const CashTransactionSchema = z.object({
 });
 
 export type CashTransactionState =
-  | { errors?: Record<string, string[]>; message?: string; success?: boolean }
+  | { errors?: Record<string, string[]>; message?: string; success?: boolean; ruleApplied?: number }
   | undefined;
 
 function readTransaction(formData: FormData) {
@@ -95,10 +95,14 @@ export async function updateCashTransaction(
   }
 
   const { id, date, description, categoryId, amount, type, paymentMethod, notes } = validated.data;
+  // "Sempre categorizar assim": vira regra aplicada aos parecidos agora e nos próximos syncs.
+  const rulePattern = String(formData.get("rulePattern") ?? "").trim().slice(0, 120);
+  const learnRule = formData.get("learnRule") === "on" && Boolean(categoryId) && rulePattern.length >= 3;
+  let ruleApplied = 0;
 
   try {
-    const updated = await withUser(user.id, (tx) =>
-      tx
+    const updated = await withUser(user.id, async (tx) => {
+      const rows = await tx
         .update(cashTransactions)
         .set({
           date,
@@ -110,8 +114,22 @@ export async function updateCashTransaction(
           notes: notes || null,
         })
         .where(eq(cashTransactions.id, id))
-        .returning({ id: cashTransactions.id })
-    );
+        .returning({ id: cashTransactions.id });
+      if (rows.length > 0 && learnRule && categoryId) {
+        await tx
+          .insert(categorizationRules)
+          .values({ pattern: rulePattern, type, categoryId, createdBy: user.id })
+          .onConflictDoUpdate({
+            target: [categorizationRules.pattern, categorizationRules.type],
+            set: { categoryId },
+          });
+        const { rows: applied } = await tx.execute<{ n: number }>(
+          sql`select public.categorizar_lancamentos_bancarios() as n`
+        );
+        ruleApplied = Number(applied[0]?.n ?? 0);
+      }
+      return rows;
+    });
     if (updated.length === 0) return { message: "Lançamento não encontrado." };
   } catch (err) {
     logDbError("updateCashTransaction", err);
@@ -120,7 +138,7 @@ export async function updateCashTransaction(
 
   revalidatePath("/fluxo-de-caixa");
   revalidatePath("/dashboard");
-  return { success: true };
+  return { success: true, ruleApplied };
 }
 
 const CostCategorySchema = z.object({
