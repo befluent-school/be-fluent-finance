@@ -5,6 +5,8 @@ process.env.APP_SECRET ??= "0".repeat(64);
 process.env.NEXT_PUBLIC_APP_URL ??= "http://localhost:3000";
 
 const { runTool } = await import("@/lib/abelha/tools");
+type Ctx = import("@/lib/abelha/tools").ToolContext;
+const newCtx = (): Ctx => ({ userId: owner, proposals: [], changes: [] });
 
 const LABEL = "__abelha_test__";
 let providerId = "";
@@ -37,7 +39,7 @@ describe("ferramentas da Abelha", () => {
   });
 
   it("conferir_extrato: acha o que falta e propõe importar só isso", async () => {
-    const ctx = { userId: owner, proposals: [], changes: [] };
+    const ctx = newCtx();
     const r = (await runTool(
       "conferir_extrato",
       {
@@ -64,7 +66,7 @@ describe("ferramentas da Abelha", () => {
   });
 
   it("conferir_extrato: transcrição que não fecha com o saldo do dia não gera proposta", async () => {
-    const ctx = { userId: owner, proposals: [], changes: [] };
+    const ctx = newCtx();
     const r = (await runTool(
       "conferir_extrato",
       {
@@ -81,7 +83,7 @@ describe("ferramentas da Abelha", () => {
 
   it("categorizar com regra: aplica e deixa a regra gravada", async () => {
     const { rows } = await ownerPool.query("select id from public.cash_transactions where dedupe_key = '__abelha_2003-03-04'");
-    const ctx = { userId: owner, proposals: [], changes: [] as string[] };
+    const ctx = newCtx();
     const r = (await runTool(
       "categorizar",
       { ids: [rows[0].id], categoria: "marketing e vendas", sempre_que_contiver: "FORNECEDOR ZETA" },
