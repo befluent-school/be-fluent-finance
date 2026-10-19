@@ -15,6 +15,13 @@ let owner = "";
 describe("ferramentas da Abelha", () => {
   beforeAll(async () => {
     owner = await ensureUser("rls-owner@teste.local", "owner");
+    // Sobras de uma execução interrompida (ex.: banco caiu no meio do teste).
+    await ownerPool.query(
+      "delete from public.cash_transactions where bank_provider_id in (select id from public.bank_providers where label = $1)",
+      [LABEL]
+    );
+    await ownerPool.query("delete from public.bank_providers where label = $1", [LABEL]);
+    await ownerPool.query("delete from public.categorization_rules where pattern = 'FORNECEDOR ZETA'");
     const { rows } = await ownerPool.query(
       `insert into public.bank_providers (provider, label, active) values ('manual', $1, true) returning id`,
       [LABEL]
