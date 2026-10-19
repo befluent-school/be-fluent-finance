@@ -4,8 +4,8 @@ import { sql } from "drizzle-orm";
 import { getActionUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
 import { withUser } from "@/lib/db";
-import { isAnthropicConfigured } from "@/lib/anthropic";
-import { runAbelha, type UserBlock } from "@/lib/abelha/agent";
+import { isAIConfigured } from "@/lib/ai";
+import { PROACTIVE_KICKOFF, runAbelha, type Attachment } from "@/lib/abelha/agent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ export async function GET() {
   );
   const r = rows[0] as { sem_categoria: string; divergencias: { conta: string; diferenca: number }[] };
   return NextResponse.json({
-    configured: isAnthropicConfigured(),
+    configured: isAIConfigured(),
     semCategoria: Number(r?.sem_categoria ?? 0),
     divergencias: r?.divergencias ?? [],
   });
@@ -46,8 +46,8 @@ export async function GET() {
 export async function POST(req: Request) {
   const user = await getActionUser(Policies.ownerOrSocio);
   if (!user) return NextResponse.json({ error: "Você não tem permissão para usar a Abelha." }, { status: 403 });
-  if (!isAnthropicConfigured()) {
-    return NextResponse.json({ error: "A IA não está configurada neste servidor (ANTHROPIC_API_KEY)." }, { status: 503 });
+  if (!isAIConfigured()) {
+    return NextResponse.json({ error: "A IA não está configurada neste servidor (OPENAI_API_KEY)." }, { status: 503 });
   }
 
   let form: FormData;
@@ -64,32 +64,30 @@ export async function POST(req: Request) {
   const files = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   if (files.length > MAX_FILES) return NextResponse.json({ error: `Envie no máximo ${MAX_FILES} arquivos por vez.` }, { status: 400 });
 
-  const blocks: UserBlock[] = [];
+  const attachments: Attachment[] = [];
   for (const f of files) {
     if (f.size > MAX_FILE_BYTES) {
       return NextResponse.json({ error: `"${f.name}" passa de 9 MB.` }, { status: 413 });
     }
     const buf = Buffer.from(await f.arrayBuffer());
     if (f.type === "application/pdf" || /\.pdf$/i.test(f.name)) {
-      blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: buf.toString("base64") }, title: f.name });
+      attachments.push({ kind: "pdf", name: f.name, base64: buf.toString("base64") });
     } else if (IMAGE_TYPES.has(f.type)) {
-      blocks.push({
-        type: "image",
-        source: { type: "base64", media_type: f.type as "image/jpeg" | "image/png" | "image/webp" | "image/gif", data: buf.toString("base64") },
-      });
+      attachments.push({ kind: "image", name: f.name, mime: f.type, base64: buf.toString("base64") });
     } else if (TEXT_EXT.test(f.name) || f.type.startsWith("text/")) {
-      blocks.push({ type: "text", text: `Arquivo "${f.name}":\n${buf.toString("utf8").slice(0, 400_000)}` });
+      attachments.push({ kind: "text", name: f.name, text: buf.toString("utf8").slice(0, 400_000) });
     } else {
       return NextResponse.json({ error: `Formato de "${f.name}" não suportado. Use foto, PDF, CSV, OFX ou TXT.` }, { status: 400 });
     }
   }
-  if (files.length > 0) {
-    blocks.unshift({ type: "text", text: `[${files.length} arquivo(s) anexado(s): ${files.map((f) => f.name).join(", ")}]` });
-  }
-  blocks.push({ type: "text", text: message.trim() || "Analise o(s) arquivo(s) anexado(s)." });
+  const proactive = form.get("mode") === "proactive";
+  const text = proactive
+    ? PROACTIVE_KICKOFF
+    : (files.length ? `[${files.length} arquivo(s) anexado(s): ${files.map((f) => f.name).join(", ")}]\n` : "") +
+      (message.trim() || "Analise o(s) arquivo(s) anexado(s).");
 
   try {
-    const result = await runAbelha({ userId: user.id, userName: user.fullName, history: history.data, current: blocks });
+    const result = await runAbelha({ userId: user.id, userName: user.fullName, history: history.data, message: text, attachments });
     return NextResponse.json(result);
   } catch (err) {
     console.error("[abelha]", err instanceof Error ? err.message : err);

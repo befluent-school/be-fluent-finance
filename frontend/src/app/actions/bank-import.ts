@@ -9,7 +9,7 @@ import { logDbError } from "@/lib/db/errors";
 import { FORBIDDEN_MESSAGE, getActionUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
 import { isoDate } from "@/lib/validation";
-import { createAnthropicClient, isAnthropicConfigured } from "@/lib/anthropic";
+import { aiText, isAIConfigured } from "@/lib/ai";
 
 // Importação de extrato é conciliação bancária: owner e sócio (mesma regra
 // da página /banco/conciliacao e do RLS de bank_statement_imports).
@@ -98,28 +98,16 @@ export async function suggestCategoriesForImport(
   const list = parsed.data.descriptions;
   const categories = parsed.data.categories;
 
-  if (!isAnthropicConfigured() || list.length === 0) {
+  if (!isAIConfigured() || list.length === 0) {
     return list.map((description) => ({ description, suggestedCategory: null }));
   }
 
   try {
-    const client = createAnthropicClient();
-    const response = await client.messages.create({
-      model: "claude-sonnet-5-5",
-      max_tokens: 2048,
+    const text = await aiText({
+      maxTokens: 2048,
       system: `Você categoriza lançamentos de extrato bancário de uma escola de mentoria de inglês. Categorias disponíveis: ${categories.join(", ")}. Para cada descrição numerada, responda APENAS com o número seguido de ":" e o nome exato de uma categoria da lista (ou "Nenhuma" se não tiver certeza). Uma linha por item, sem texto extra.`,
-      messages: [
-        {
-          role: "user",
-          content: list.map((d, i) => `${i + 1}: ${d}`).join("\n"),
-        },
-      ],
+      user: list.map((d, i) => `${i + 1}: ${d}`).join("\n"),
     });
-
-    const text = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n");
 
     const suggestions = new Map<number, string>();
     for (const line of text.split("\n")) {

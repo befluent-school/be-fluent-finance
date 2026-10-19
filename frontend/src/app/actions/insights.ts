@@ -5,7 +5,7 @@ import { todayBR } from "@/lib/dates";
 import { withUser, sequential } from "@/lib/db";
 import { getActionUser } from "@/lib/auth/session";
 import { Policies } from "@/lib/auth/policies";
-import { createAnthropicClient, isAnthropicConfigured } from "@/lib/anthropic";
+import { aiText, isAIConfigured } from "@/lib/ai";
 import {
   countActiveEnrollments,
   countOverdueTasks,
@@ -25,7 +25,7 @@ export async function getFinancialInsights(): Promise<InsightsResult> {
   const user = await getActionUser(Policies.authenticated);
   if (!user) return { error: "Sem permissão." };
 
-  if (!isAnthropicConfigured()) {
+  if (!isAIConfigured()) {
     return { error: "not_configured" };
   }
 
@@ -73,18 +73,7 @@ Dados reais do mês corrente (${referenceMonth.slice(0, 7)}):
 `.trim();
 
   try {
-    const client = createAnthropicClient();
-    const response = await client.messages.create({
-      model: "claude-sonnet-5-5",
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: summary }],
-    });
-
-    const text = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n");
+    const text = await aiText({ system: SYSTEM_PROMPT, user: summary, maxTokens: 1024 });
     const insights = text
       .split("\n")
       .map((line) => line.replace(/^[-•*]\s*/, "").trim())
