@@ -44,7 +44,7 @@ export async function listPayrollForMonth(tx: Tx, referenceMonth: string): Promi
                and i.reference_month = ${referenceMonth}::date
                and i.paid_date is not null
           ), 0) as student_revenue,
-          (select count(*) from public.enrollments e where e.teacher_id = t.id and e.status = active) as active_students
+          (select count(*) from public.enrollments e where e.teacher_id = t.id and e.status = 'active') as active_students
         from public.teachers t
         left join public.teacher_payments tp
           on tp.teacher_id = t.id and tp.reference_month = ${referenceMonth}::date

@@ -17,6 +17,7 @@ import {
 import { getPayablesOpen, getReceivablesOpen, getSimplesApuracao } from "@/lib/queries/finance";
 import { parseYearMonth } from "@/lib/validation";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { getBankDivergences } from "@/lib/queries/bank-check";
 import { LtvCacHealth } from "@/components/ui/ltv-cac-health";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { AiInsightsCard } from "@/components/ui/ai-insights-card";
@@ -140,18 +141,7 @@ export default async function DashboardPage({
       // que efetivamente se paga agora.
       () => getSimplesApuracao(tx, `${addMonths(currentMonth, -1)}-01`),
       // Conferência automática: saldo que o banco informa × saldo calculado.
-      async () => {
-        const { rows } = await tx.execute<{ label: string; banco: string; calculado: string }>(sql`
-          select p.label, p.bank_balance as banco,
-                 coalesce((select sum(case when v.type = entrada then v.amount else -v.amount end)
-                             from public.cash_transactions_with_balance v
-                            where v.bank_provider_id = p.id and v.in_balance), 0) as calculado
-            from public.bank_providers p
-           where p.active and p.bank_balance is not null`);
-        return rows
-          .map((row) => ({ label: row.label, banco: Number(row.banco), calculado: Number(row.calculado) }))
-          .filter((row) => Math.abs(row.banco - row.calculado) > 1);
-      },
+      () => getBankDivergences(tx),
     ]);
     return {
       mrr,

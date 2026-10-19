@@ -91,6 +91,24 @@ export async function POST(req: Request) {
     return NextResponse.json(result);
   } catch (err) {
     console.error("[abelha]", err instanceof Error ? err.message : err);
+    // Problemas da conta do provedor de IA: mensagem clara do que fazer.
+    const e = err as { status?: number; code?: string; error?: { code?: string } };
+    const code = e.code ?? e.error?.code;
+    if (code === "insufficient_quota" || (e.status === 429 && /credit|quota/i.test(String((err as Error).message)))) {
+      return NextResponse.json(
+        { error: "A conta da OpenAI está sem créditos. Adicione saldo em platform.openai.com → Settings → Billing e tente de novo." },
+        { status: 402 }
+      );
+    }
+    if (e.status === 401) {
+      return NextResponse.json({ error: "A chave da OpenAI foi recusada (inválida ou apagada). Cadastre uma chave nova no servidor." }, { status: 401 });
+    }
+    if (e.status === 404 || code === "model_not_found") {
+      return NextResponse.json({ error: "O modelo de IA configurado não está disponível nesta conta da OpenAI (OPENAI_MODEL)." }, { status: 502 });
+    }
+    if (e.status === 429) {
+      return NextResponse.json({ error: "A OpenAI está limitando as requisições agora. Aguarde um minuto e tente de novo." }, { status: 429 });
+    }
     return NextResponse.json({ error: "A Abelha não conseguiu responder agora. Tente de novo em instantes." }, { status: 502 });
   }
 }
