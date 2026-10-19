@@ -4,7 +4,7 @@ import { TopbarClient } from "@/components/topbar-client";
 import { withUser } from "@/lib/db";
 import { ensureRolloverToday } from "@/lib/queries/finance";
 import { ensureBankSyncRecent } from "@/lib/bank/sync";
-import { AbelhaWidget } from "@/components/abelha/abelha-widget";
+import { AbelhaSafe } from "@/components/abelha/abelha-safe";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // Cada página e cada Server Action também exigem sessão por conta própria
@@ -30,7 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <TopbarClient userName={user.fullName} />
         <main className="relative z-10 flex-1 p-4 md:p-8">{children}</main>
       </div>
-      {(user.role === "owner" || user.role === "socio") && <AbelhaWidget />}
+      {(user.role === "owner" || user.role === "socio") && <AbelhaSafe />}
     </div>
   );
 }

@@ -112,10 +112,11 @@ export function AbelhaWidget() {
     msgsRef.current = msgs;
     writeLS(STORAGE_KEY, msgs.slice(-60));
   }, [msgs]);
-  useEffect(
-    () => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }),
-    [msgs, busy, open],
-  );
+  // Chaves obrigatórias: no Chrome novo scrollIntoView() devolve uma Promise, e
+  // um efeito que devolve algo que não é função derruba a página no React.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [msgs, busy, open]);
 
   const refreshStatus = useCallback(async () => {
     try {
