@@ -129,6 +129,18 @@ export async function syncProvider(
 
   // Transferências entre contas próprias são marcadas depois, por
   // reconcileTransfers, quando as duas pernas já estão no banco.
+  // Sem id do banco, duas compras idênticas no mesmo dia (mesma loja e valor)
+  // gerariam a mesma chave e a segunda seria descartada. A 2ª ocorrência dentro
+  // do lote ganha o sufixo "#2" (a 1ª mantém a chave antiga, compatível com o
+  // que já está gravado). O extrato vem sempre na mesma ordem, então a chave é estável.
+  const seen = new Map<string, number>();
+  const keyFor = (t: NormalizedTxn) => {
+    const base = dedupeKeyFor(t, p.label);
+    if (t.externalId) return base;
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n === 1 ? base : `${base}#${n}`;
+  };
   const rows = txns.map((t) => ({
     date: t.date,
     description: `${t.description} (${p.label})`,
@@ -137,7 +149,7 @@ export async function syncProvider(
     categoryId: null,
     source: p.provider === "asaas" ? ("asaas" as const) : p.provider === "inter" ? ("inter" as const) : ("api_sync" as const),
     bankProviderId: p.id,
-    dedupeKey: dedupeKeyFor(t, p.label),
+    dedupeKey: keyFor(t),
   }));
 
   const inserted = await tx

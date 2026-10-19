@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import * as z from "zod";
-import { inArray } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { withUser } from "@/lib/db";
 import { bankProviders, cashTransactions } from "@/lib/db/schema";
 import { logDbError } from "@/lib/db/errors";
@@ -218,11 +218,14 @@ export async function confirmBankImport(
       const match = providers.find(
         (p) => norm(label).includes(norm(p.provider)) || norm(p.label).includes(norm(label)) || norm(label).includes(norm(p.label))
       );
-      return tx
+      const rows = await tx
         .insert(cashTransactions)
         .values(cashRows.map((row) => ({ ...row, bankProviderId: match?.id ?? null })))
         .onConflictDoNothing({ target: cashTransactions.dedupeKey })
         .returning({ id: cashTransactions.id });
+      // Regras aprendidas valem também para o que chega por extrato.
+      if (rows.length > 0) await tx.execute(sql`select public.categorizar_lancamentos_bancarios()`);
+      return rows;
     });
 
     revalidatePath("/fluxo-de-caixa");
