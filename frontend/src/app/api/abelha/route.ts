@@ -18,7 +18,9 @@ const TEXT_EXT = /\.(csv|ofx|txt|tsv|json)$/i;
 
 const History = z
   .array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(20000) }))
-  .max(40);
+  .max(40)
+  // Cada mensagem reenviada custa tokens: a IA recebe só a conversa recente.
+  .transform((h) => h.slice(-16));
 
 /** Pendências para a saudação da Abelha (sem IA: rápido e grátis). */
 export async function GET() {

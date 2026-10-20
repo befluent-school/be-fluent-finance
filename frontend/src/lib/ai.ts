@@ -5,7 +5,9 @@ import { createAnthropicClient } from "@/lib/anthropic";
 /**
  * Provedor de IA do sistema. OpenAI quando OPENAI_API_KEY existe (padrão da
  * Be Fluent); Anthropic como alternativa se só houver ANTHROPIC_API_KEY.
- * O modelo da OpenAI pode ser trocado sem deploy por OPENAI_MODEL.
+ * Modelos econômicos, trocáveis sem deploy pelo .env:
+ *  - OPENAI_MODEL (Abelha: lê extratos e usa ferramentas) — padrão gpt-5-mini;
+ *  - OPENAI_MODEL_LIGHT (sugestões de categoria e insights) — padrão gpt-5-nano.
  */
 export type AIProvider = "openai" | "anthropic";
 
@@ -17,7 +19,8 @@ export function aiProvider(): AIProvider | null {
 
 export const isAIConfigured = () => aiProvider() !== null;
 
-export const OPENAI_MODEL = () => process.env.OPENAI_MODEL || "gpt-5";
+export const OPENAI_MODEL = () => process.env.OPENAI_MODEL || "gpt-5-mini";
+export const OPENAI_MODEL_LIGHT = () => process.env.OPENAI_MODEL_LIGHT || "gpt-5-nano";
 export const ANTHROPIC_MODEL = "claude-sonnet-5-5";
 
 export function createOpenAIClient() {
@@ -25,19 +28,24 @@ export function createOpenAIClient() {
 }
 
 /** Parâmetros que só modelos de raciocínio (gpt-5, o-series) aceitam. */
-export function openAIReasoningParams(model: string): { reasoning_effort?: "low" } {
-  return /^(gpt-5|o\d)/.test(model) ? { reasoning_effort: "low" } : {};
+export function openAIReasoningParams(
+  model: string,
+  effort: "minimal" | "low" = "low"
+): { reasoning_effort?: "minimal" | "low" } {
+  // Raciocínio gasta tokens pagos: só o mínimo necessário para cada tarefa.
+  if (/^gpt-5/.test(model)) return { reasoning_effort: effort };
+  return /^o\d/.test(model) ? { reasoning_effort: "low" } : {};
 }
 
 /** Uma pergunta, uma resposta de texto — usado por insights e sugestões. */
 export async function aiText(opts: { system: string; user: string; maxTokens?: number }): Promise<string> {
   const provider = aiProvider();
   if (provider === "openai") {
-    const model = OPENAI_MODEL();
+    const model = OPENAI_MODEL_LIGHT();
     const r = await createOpenAIClient().chat.completions.create({
       model,
       max_completion_tokens: Math.max(opts.maxTokens ?? 2048, 2048),
-      ...openAIReasoningParams(model),
+      ...openAIReasoningParams(model, "minimal"),
       messages: [
         { role: "system", content: opts.system },
         { role: "user", content: opts.user },

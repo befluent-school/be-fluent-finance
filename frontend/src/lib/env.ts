@@ -27,6 +27,7 @@ const EnvSchema = z.object({
 
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().optional(),
+  OPENAI_MODEL_LIGHT: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
 
   // Segredo do endpoint interno de automação (/api/cron/*) chamado pelo
